@@ -145,6 +145,7 @@ typedef union PACK_STRUCTURE {
 	uint32_t in_event_thread;\
 	io_value_pipe_t *tasks;\
 	io_cpu_clock_pointer_t gpio_clock; \
+	uint32_t prbs_state[4]; \
 	/**/
 
 typedef struct PACK_STRUCTURE io_cc2652_cpu {
@@ -937,6 +938,30 @@ cc2652_set_io_pin_interrupt (io_t *io,io_pin_t rpin) {
 */
 }
 
+INLINE_FUNCTION uint32_t prbs_rotl(const uint32_t x, int k) {
+	return (x << k) | (x >> (32 - k));
+}
+
+static uint32_t
+cc2652_get_prbs_random_u32 (io_t *io) {
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	uint32_t *s = this->prbs_state;
+	const uint32_t result = prbs_rotl (s[0] + s[3], 7) + s[0];
+
+	const uint32_t t = s[1] << 9;
+
+	s[2] ^= s[0];
+	s[3] ^= s[1];
+	s[1] ^= s[2];
+	s[0] ^= s[3];
+
+	s[2] ^= t;
+
+	s[3] = prbs_rotl (s[3], 11);
+
+	return result;
+}
+
 static void
 cc2652_panic (io_t *io,int code) {
 	DISABLE_INTERRUPTS;
@@ -955,6 +980,7 @@ add_io_implementation_cpu_methods (io_implementation_t *io_i) {
 	io_i->get_byte_memory = cc2652_io_get_byte_memory;
 	io_i->get_short_term_value_memory = cc2652_io_get_stvm;
 	io_i->do_gc = cc2652_do_gc;
+	io_i->get_next_prbs_u32 = cc2652_get_prbs_random_u32;
 	io_i->signal_task_pending = cc2652_signal_task_pending;
 	io_i->enqueue_task = cc2652_enqueue_task;
 //	io_i->do_next_task = cc2652_do_next_task;
@@ -1006,6 +1032,11 @@ initialise_cpu_io (io_t *io) {
 
 	register_io_interrupt_handler (io,INT_PENDSV,event_thread,io);
 	register_io_interrupt_handler (io,INT_HARD_FAULT,hard_fault,io);
+
+	this->prbs_state[0] = io_get_random_u32(io);
+	this->prbs_state[1] = 0xf542d2d3;
+	this->prbs_state[2] = 0x6fa035c3;
+	this->prbs_state[3] = 0x77f2db5b;
 }
 
 static void
@@ -1129,12 +1160,47 @@ const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
 	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
 	handle_io_cpu_interrupt,
-
 };
-
 
 #endif /* IMPLEMENT_IO_CPU */
 #ifdef IMPLEMENT_VERIFY_IO_CPU
+TEST_BEGIN(test_io_random_1) {
+	uint32_t rand[3];
+
+	rand[0] = io_get_random_u32(TEST_IO);
+	rand[1] = io_get_random_u32(TEST_IO);
+	rand[2] = io_get_random_u32(TEST_IO);
+
+	if (rand[0] == rand[1])	rand[1] = io_get_random_u32(TEST_IO);
+	if (rand[0] == rand[1]) rand[1] = io_get_random_u32(TEST_IO);
+	if (rand[0] == rand[1]) rand[1] = io_get_random_u32(TEST_IO);
+
+	if (rand[1] == rand[2]) rand[2] = io_get_random_u32(TEST_IO);
+	if (rand[1] == rand[2]) rand[2] = io_get_random_u32(TEST_IO);
+	if (rand[1] == rand[2]) rand[2] = io_get_random_u32(TEST_IO);
+
+	VERIFY(rand[0] != rand[1],NULL);
+	VERIFY(rand[1] != rand[2],NULL);
+
+	rand[0] = io_get_next_prbs_u32(TEST_IO);
+	rand[1] = io_get_next_prbs_u32(TEST_IO);
+	rand[2] = io_get_next_prbs_u32(TEST_IO);
+
+	if (rand[0] == rand[1])	rand[1] = io_get_next_prbs_u32(TEST_IO);
+	if (rand[0] == rand[1]) rand[1] = io_get_next_prbs_u32(TEST_IO);
+	if (rand[0] == rand[1]) rand[1] = io_get_next_prbs_u32(TEST_IO);
+
+	if (rand[1] == rand[2]) rand[2] = io_get_next_prbs_u32(TEST_IO);
+	if (rand[1] == rand[2]) rand[2] = io_get_next_prbs_u32(TEST_IO);
+	if (rand[1] == rand[2]) rand[2] = io_get_next_prbs_u32(TEST_IO);
+
+	VERIFY(rand[0] != rand[1],NULL);
+	VERIFY(rand[1] != rand[2],NULL);
+
+
+}
+TEST_END
+
 static void
 test_io_events_1_ev (io_event_t *ev) {
 	*((uint32_t*) ev->user_value) = 1;
@@ -1162,6 +1228,7 @@ UNIT_TEARDOWN(teardown_io_cpu_unit_test) {
 void
 io_cpu_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
+		test_io_random_1,
 		test_io_events_1,
 		0
 	};
