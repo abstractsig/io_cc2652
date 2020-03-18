@@ -40,16 +40,36 @@ typedef struct PACK_STRUCTURE cc2652_hf_rc_oscillator {
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
 
+INLINE_FUNCTION bool
+cpu_clock_is_cc2652_hf_rc_oscillator (io_cpu_clock_pointer_t clock) {
+	return io_cpu_clock_has_implementation (clock,&cc2652_hf_rc_48_oscillator_implementation);
+}
+
 typedef struct PACK_STRUCTURE cc2652_hp_oscillator {
 	IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
 	float64_t frequency;
 } cc2652_hp_oscillator_t;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
 
+INLINE_FUNCTION bool
+cpu_clock_is_cc2652_hp_oscillator (io_cpu_clock_pointer_t clock) {
+	return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
+}
+
+typedef struct PACK_STRUCTURE cc2652_sclk_lf {
+	IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
+} cc2652_sclk_lf_t;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation;
+
 typedef struct cc2652_core_clock {
 	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
 } cc2652_core_clock_t;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
+
+typedef struct cc2652_rtc_clock {
+	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
+} cc2652_rtc_clock_t;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation;
 
 typedef struct cc2652_peripheral_clock {
 	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
@@ -100,7 +120,7 @@ typedef union PACK_STRUCTURE {
 		.cc.pull_mode = pull,\
 		.cc.drive_level = 0,\
 		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = 0,\
+		.cc.ioc_port_id = IOC_PORT_GPIO,\
 	}
 
 #define def_cc2652_io_output_pin(pin_number,active,initial) (cc2652_io_pin_t) {\
@@ -110,7 +130,7 @@ typedef union PACK_STRUCTURE {
 		.cc.pull_mode = IO_PIN_NO_PULL,\
 		.cc.drive_level = 0,\
 		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = 0,\
+		.cc.ioc_port_id = IOC_PORT_GPIO,\
 	}
 
 #define def_cc2652_io_alternate_pin(pin_number,active,IOC) (cc2652_io_pin_t) {\
@@ -132,8 +152,16 @@ typedef union PACK_STRUCTURE {
 		.cc.pull_mode = IO_PIN_NO_PULL,\
 		.cc.drive_level = 0,\
 		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = 0,\
+		.cc.ioc_port_id = IOC_PORT_GPIO,\
 	}
+
+typedef struct PACK_STRUCTURE cc2652_time_clock {
+
+	io_cpu_clock_pointer_t clock;
+	io_event_t alarm;
+	io_t *io;
+	
+} cc2652_time_clock_t;
 
 //
 // cpu
@@ -146,6 +174,8 @@ typedef union PACK_STRUCTURE {
 	io_value_pipe_t *tasks;\
 	io_cpu_clock_pointer_t gpio_clock; \
 	uint32_t prbs_state[4]; \
+	cc2652_time_clock_t rtc;\
+	uint32_t first_run;\
 	/**/
 
 typedef struct PACK_STRUCTURE io_cc2652_cpu {
@@ -187,11 +217,14 @@ typedef struct PACK_STRUCTURE cc2652_uart {
 //
 //-----------------------------------------------------------------------------
 #include <cc2652rb.h>
+
+//
+// because ti SDK does not follow cmsis convention for rnterrupt numbering
+//
 typedef int32_t IRQn_Type;
-
 #define SysTick_IRQn (INT_SYSTICK - 16)
-
-#include <core_cm4.h>
+#define CMSIS_IRQn(N)	((int32_t)(N) - 16)
+#include <cmsis/core_cm4.h>
 
 #define NUMBER_OF_ARM_INTERRUPT_VECTORS	16L
 #define NUMBER_OF_NRF_INTERRUPT_VECTORS	NUM_INTERRUPTS
@@ -212,6 +245,99 @@ static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
 	} while (0)
 
 
+/*
+ *-----------------------------------------------------------------------------
+ *
+ * the initial io state settings
+ *
+ *-----------------------------------------------------------------------------
+ */
+static PERSISTANT_MEMORY_SECTION io_persistant_state_t io_config = {
+	.first_run_flag = IO_FIRST_RUN_SET,
+	.power_cycles = 0,
+	.uid = {{0}},
+	.secret = {{0}},
+	.shared = {{0}},
+};
+
+/*
+ *
+ *  When updating the Flash, the VIMS (Vesatile Instruction Memory System)
+ *  mode must be set to GPRAM or OFF, before programming, and both VIMS
+ *  flash line buffers must be set to disabled.
+ *
+ */
+static uint8_t
+disableFlashCache(void) {
+	uint8_t mode = VIMSModeGet(VIMS_BASE);
+
+	VIMSLineBufDisable(VIMS_BASE);
+
+	if (mode != VIMS_MODE_DISABLED) {
+		VIMSModeSet(VIMS_BASE, VIMS_MODE_DISABLED);
+		while (VIMSModeGet(VIMS_BASE) != VIMS_MODE_DISABLED);
+	}
+
+	return (mode);
+}
+
+static void
+restoreFlashCache(uint8_t mode) {
+	if (mode != VIMS_MODE_DISABLED) {
+		VIMSModeSet(VIMS_BASE, VIMS_MODE_ENABLED);
+	}
+
+	VIMSLineBufEnable(VIMS_BASE);
+}
+
+static bool
+cc2652io_config_clear_first_run (void) {
+	if (io_config.first_run_flag == IO_FIRST_RUN_SET) {
+		io_persistant_state_t new_ioc = io_config;
+		uint8_t mode = disableFlashCache ();
+		uint32_t sector_address = (uint32_t) &io_config;
+		
+		DISABLE_INTERRUPTS;
+		
+		new_ioc.first_run_flag = IO_FIRST_RUN_CLEAR;
+
+		if (FlashProtectionGet (sector_address) == FLASH_NO_PROTECT) {
+			FlashSectorErase (sector_address);			
+			FlashProgram (
+				(uint8_t*) &new_ioc,sector_address,sizeof(io_persistant_state_t)
+			);
+		}
+		
+		sector_address = FlashCheckFsmForError ();
+		
+		restoreFlashCache (mode);
+		
+		ENABLE_INTERRUPTS;
+		
+		return memcmp (&new_ioc,&io_config,sizeof(io_persistant_state_t)) == 0;
+	} else {
+		return true;
+	}
+}
+
+static bool
+cc2652_io_config_is_first_run (void) {
+	bool first = (io_config.first_run_flag == IO_FIRST_RUN_SET);
+	cc2652io_config_clear_first_run ();
+	return first;
+}
+
+static io_uid_t const*
+cc2652_get_uid (io_t *io) {
+	return &io_config.uid;
+}
+
+bool
+cc2652_is_first_run (io_t *io) {
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	return this->first_run;
+}
+
 static void
 null_interrupt_handler (void *w) {
 	while(1);
@@ -220,13 +346,6 @@ null_interrupt_handler (void *w) {
 //
 // power domains
 //
-/*
- *-----------------------------------------------------------------------------
- *
- * power domains
- *
- *-----------------------------------------------------------------------------
- */
 
 bool
 controlled_power_domain_turn_on (io_cpu_power_domain_pointer_t pd) {
@@ -247,30 +366,16 @@ controlled_power_domain_turn_on (io_cpu_power_domain_pointer_t pd) {
 	return true;
 }
 
-static void
-turn_power_domain_off_nop (io_t *io,io_cpu_power_domain_pointer_t pd) {
-}
-
-static void
-turn_power_domain_on_nop (io_t *io,io_cpu_power_domain_pointer_t pd) {
-}
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-always_on_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
-	.turn_on = turn_power_domain_on_nop,
-};
-
 EVENT_DATA io_cpu_power_domain_implementation_t
 cpu_core_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
-	.turn_on = turn_power_domain_on_nop,
+	.turn_off = io_power_domain_no_operation,
+	.turn_on = io_power_domain_no_operation,
 };
 
 EVENT_DATA io_cpu_power_domain_implementation_t
 bus_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
-	.turn_on = turn_power_domain_on_nop,
+	.turn_off = io_power_domain_no_operation,
+	.turn_on = io_power_domain_no_operation,
 };
 
 static void
@@ -280,14 +385,14 @@ turn_peripheral_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
 
 EVENT_DATA io_cpu_power_domain_implementation_t
 peripheral_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
+	.turn_off = io_power_domain_no_operation,
 	.turn_on = turn_peripheral_power_domain_on,
 };
 
 EVENT_DATA io_cpu_power_domain_implementation_t
 radio_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
-	.turn_on = turn_power_domain_on_nop,
+	.turn_off = io_power_domain_no_operation,
+	.turn_on = io_power_domain_no_operation,
 };
 
 static void
@@ -297,19 +402,24 @@ turn_serial_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
 
 static EVENT_DATA io_cpu_power_domain_implementation_t
 serial_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
+	.turn_off = io_power_domain_no_operation,
 	.turn_on = turn_serial_power_domain_on,
 };
 
 EVENT_DATA io_cpu_power_domain_implementation_t
 vims_power_domain_implementation = {
-	.turn_off = turn_power_domain_off_nop,
-	.turn_on = turn_power_domain_on_nop,
+	.turn_off = io_power_domain_no_operation,
+	.turn_on = io_power_domain_no_operation,
+};
+
+EVENT_DATA io_cc2652_cpu_power_domain_t always_on_power_domain = {
+	.implementation = &cpu_core_power_domain_implementation,
+	.prcm_domain_identifier = 0, // none
 };
 
 EVENT_DATA io_cc2652_cpu_power_domain_t cpu_core_power_domain = {
 	.implementation = &cpu_core_power_domain_implementation,
-	.prcm_domain_identifier = PRCM_DOMAIN_MCU, // no?
+	.prcm_domain_identifier = PRCM_DOMAIN_MCU, //
 };
 
 io_cc2652_cpu_power_domain_t peripheral_power_domain = {
@@ -332,38 +442,40 @@ cc2652_hf_rc_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
 }
 
 static float64_t
-cc2652_hf_rc_48_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
+cc2652_hf_rc_48_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
 	return 48000000.0;
 }
 
+//
+// oscillators seem to be outside any power domain
+//
 EVENT_DATA io_cpu_clock_implementation_t
 cc2652_hf_rc_48_oscillator_implementation = {
 	.specialisation_of = &io_cpu_clock_implementation,
-	.get_frequency = cc2652_hf_rc_48_oscillator_get_frequency,
-	.link_input_to_output = NULL,
-	.link_output_to_input = NULL,
+	.get_current_frequency = cc2652_hf_rc_48_oscillator_get_current_frequency,
+	.get_expected_frequency = cc2652_hf_rc_48_oscillator_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_hf_rc_oscillator_start,
-	.stop = NULL, // alwary on
+	.stop = NULL,
 };
 
 static float64_t
-cc2652_hf_rc_24_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
+cc2652_hf_rc_24_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
 	return 24000000.0;
 }
 
 EVENT_DATA io_cpu_clock_implementation_t
 cc2652_hf_rc_24_oscillator_implementation = {
 	.specialisation_of = &io_cpu_clock_implementation,
-	.get_frequency = cc2652_hf_rc_24_oscillator_get_frequency,
-	.link_input_to_output = NULL,
-	.link_output_to_input = NULL,
+	.get_current_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
+	.get_expected_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_hf_rc_oscillator_start,
-	.stop = NULL, // alwary on
+	.stop = NULL,
 };
 
-
 static float64_t
-cc2652_hp_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
+cc2652_hp_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
 	cc2652_hp_oscillator_t const *c = (cc2652_hp_oscillator_t const*) (
 		io_cpu_clock_ro_pointer (this)
 	);
@@ -376,25 +488,27 @@ cc2652_hp_oscillator_get_frequency (io_cpu_clock_pointer_t this) {
 static bool
 cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
 		
-	if ((HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) & DDI_0_OSC_CTL0_HPOSC_MODE_EN_M) == 0) {
-		
-		HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) = (
-				(HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) & ~DDI_0_OSC_CTL0_HPOSC_MODE_EN_M) 
-			| 	(DDI_0_OSC_CTL0_HPOSC_MODE_EN << DDI_0_OSC_CTL0_HPOSC_MODE_EN_S)
-		);
-		while ((HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_STAT1) & DDI_0_OSC_STAT1_SCLK_HF_GOOD) == 0);
+	return OSC_IsHPOSCEnabled();
+/*		
 
+ 
+	if (!OSC_IsHPOSCEnabled()) {
+		
+		OSC_HPOSCInitializeFrequencyOffsetParameters ();
+
+		
 		return true;
 	}
 	
 	return false;
+*/
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation = {
 	.specialisation_of = &io_cpu_clock_implementation,
-	.get_frequency = cc2652_hp_oscillator_get_frequency,
-	.link_input_to_output = NULL,
-	.link_output_to_input = NULL,
+	.get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
+	.get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_hp_oscillator_start,
 	.stop = NULL,
 };
@@ -405,19 +519,73 @@ cc2652_clock_is_hp_oscillator (io_cpu_clock_pointer_t clock) {
 }
 
 static float64_t
-cc2652_core_clock_get_frequency (io_cpu_clock_pointer_t clock) {
+cc2652_sclk_lf_get_current_frequency (io_cpu_clock_pointer_t this) {
+	cc2652_sclk_lf_t const *c = (cc2652_sclk_lf_t const*) (
+		io_cpu_clock_ro_pointer (this)
+	);
+	return io_cpu_clock_get_current_frequency (c->input);
+}
+
+static bool
+cc2652_sclk_lf_start (io_t *io,io_cpu_clock_pointer_t clock) {
+	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
+			io_cpu_clock_ro_pointer (clock)
+		);
+	
+		// need to use DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL to select
+		// connect input clock configuration
+
+		if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
+			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_RCOSC_HF);
+//			HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) &= ~DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL_M;
+//			HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) |= DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL_RCOSCHFDLF;
+		} else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
+			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_XOSC_HF);
+		} else {
+			return false;
+		}
+		
+		return true;
+	} else {
+		return false;
+	}
+}
+
+EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation = {
+	.specialisation_of = &io_cpu_clock_implementation,
+	.get_current_frequency = cc2652_sclk_lf_get_current_frequency,
+	.get_expected_frequency = cc2652_sclk_lf_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_sclk_lf_start,
+	.stop = NULL,
+};
+
+static float64_t
+cc2652_core_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
 	cc2652_core_clock_t const *this = (cc2652_core_clock_t const*) (
 		io_cpu_clock_ro_pointer (clock)
 	);
-	return io_cpu_clock_get_frequency (this->input);
+	return io_cpu_clock_get_current_frequency (this->input);
 }
 
 static bool
 cc2652_core_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
+			io_cpu_clock_ro_pointer (clock)
+		);
 
-		// ???
-		
+		if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
+			OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_RCOSC_HF);
+			//or OSCHF_SwitchToRcOscTurnOffXosc().
+		} else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
+			OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
+			while (!OSCHfSourceReady());
+			OSCHfSourceSwitch();
+		} else {
+			return false;
+		}
 		return true;
 	} else {
 		return false;
@@ -431,10 +599,9 @@ cc2652_core_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation = {
 	.specialisation_of = &io_cpu_clock_implementation,
-	.get_frequency = cc2652_core_clock_get_frequency,
+	.get_current_frequency = cc2652_core_clock_get_current_frequency,
+	.get_expected_frequency = cc2652_core_clock_get_current_frequency,
 	.get_power_domain = cc2652_core_clock_get_power_domain,
-	.link_input_to_output = NULL,
-	.link_output_to_input = NULL,
 	.start = cc2652_core_clock_start,
 	.stop = NULL,
 };
@@ -464,10 +631,9 @@ cc2652_peripheral_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation = {
 	.specialisation_of = &io_cpu_clock_implementation,
-	.get_frequency = io_dependant_cpu_clock_get_frequency,
+	.get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
+	.get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
 	.get_power_domain = cc2652_peripheral_clock_get_power_domain,
-	.link_input_to_output = NULL,
-	.link_output_to_input = NULL,
 	.start = cc2652_peripheral_clock_start,
 	.stop = NULL,
 };
@@ -479,13 +645,39 @@ cc2652_serial_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation = {
 	.specialisation_of = &io_cpu_clock_implementation,
-	.get_frequency = io_dependant_cpu_clock_get_frequency,
+	.get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
+	.get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
 	.get_power_domain = cc2652_serial_clock_get_power_domain,
-	.link_input_to_output = NULL,
-	.link_output_to_input = NULL,
 	.start = cc2652_peripheral_clock_start,
 	.stop = NULL,
 };
+
+static float64_t
+cc2652_rtc_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
+	cc2652_rtc_clock_t const *this = (cc2652_rtc_clock_t const*) (
+		io_cpu_clock_ro_pointer (clock)
+	);
+	return io_cpu_clock_get_current_frequency (this->input);
+}
+
+static bool
+cc2652_rtc_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
+	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
+	.specialisation_of = &io_cpu_clock_implementation,
+	.get_current_frequency = cc2652_rtc_clock_get_current_frequency,
+	.get_expected_frequency = cc2652_rtc_clock_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_rtc_clock_start,
+	.stop = NULL,
+};
+
 
 //
 // pins
@@ -499,6 +691,18 @@ cc2652_write_to_io_pin (io_t *io,io_pin_t rpin,int32_t state) {
 	} else {
 		 GPIO_writeDio (cc2652_io_pin_number(pin),1);
 	}
+}
+
+static void
+cc2652_toggle_io_pin (io_t *io,io_pin_t rpin) {
+	cc2652_io_pin_t pin = {rpin};
+	GPIO_toggleDio(cc2652_io_pin_number(pin));
+}
+
+static int32_t
+cc2652_read_io_input_pin (io_t *io,io_pin_t rpin) {
+	cc2652_io_pin_t pin = {rpin};
+	return GPIO_readDio(cc2652_io_pin_number(pin));
 }
 
 static void
@@ -527,16 +731,24 @@ cc2652_configure_io_pin_as_input (cc2652_io_pin_t pin) {
 
 static void
 cc2652_configure_io_pin_as_alternate (cc2652_io_pin_t pin) {
-
-	IOCPinSetIoCfgMux (
+	IOCPortConfigureSet (
 		cc2652_io_pin_number (pin),
-		cc2652_io_pin_ioc_port_id (pin)
+		cc2652_io_pin_ioc_port_id (pin),
+		(
+				IOC_NO_IOPULL
+			|	0
+		)
 	);
 }
 
 //
 // sockets
 //
+
+bool
+UARTisEnabled (uint32_t ui32Base) {
+	return (HWREG(ui32Base + UART_O_CTL) & UART_CTL_UARTEN) != 0;
+}
 
 static bool
 cc2652_uart_output_next_buffer (cc2652_uart_t *this) {
@@ -653,7 +865,7 @@ cc2652_uart_get_io (io_socket_t *socket) {
 void
 cc2652_uart_set_baud_rate (cc2652_uart_t *this) {
 	
-	float64_t freq = io_cpu_clock_get_frequency (this->peripheral_clock);
+	float64_t freq = io_cpu_clock_get_current_frequency (this->peripheral_clock);
 	uint32_t clock = (uint32_t) freq;
 	uint32_t base = this->register_base_address;
 	uint32_t div = (((clock * 8) / this->baud_rate) + 1) / 2;//(clock << 6) / (this->baud_rate * 16);
@@ -661,6 +873,9 @@ cc2652_uart_set_baud_rate (cc2652_uart_t *this) {
 	HWREG(base + UART_O_IBRD) = div / 64;
 	HWREG(base + UART_O_FBRD) = div % 64;
 }
+
+#define UART_LCRH_STP1 0
+#define UART_LCRH_NO_PARITY 0
 
 static bool
 cc2652_uart_open (io_socket_t *socket) {
@@ -771,6 +986,132 @@ EVENT_DATA io_socket_implementation_t cc2652_uart_implementation = {
 	.mtu = cc2652_uart_mtu,
 };
 
+
+io_time_t
+cc2652_time_clock_get_time (io_t *io,cc2652_time_clock_t *rtc) {	
+	int64_t sec,frac;
+	
+	{
+		bool h = enter_io_critical_section (io);
+		sec = AONRTCSecGet ();
+		frac = AONRTCFractionGet ();
+		
+		exit_io_critical_section (io,h);
+	}
+	//
+	// q32.32
+	// fraction part is 1000000000/(1 << 32) = 0.2328 ns per unit
+	// multiply by (1 << 16) to use integer multiplication
+	//
+	return (io_time_t) {
+		.nanoseconds = (sec * 1000000000LL) + ((frac * 15259LL) >> 16LL),
+	};
+};
+
+//
+// expects next alarm time to be greater than current time
+//
+static bool
+set_time_clock_alarm_time (io_cc2652_cpu_t *this) {
+	if (this->alarms != &s_null_io_alarm) {
+		uint32_t sec = this->alarms->when.ns/1000000000LL;
+		uint32_t frac = ((this->alarms->when.ns - (sec * 1000000000LL)) * 281474LL) >> 16;
+		
+		AONRTCCompareValueSet (
+			AON_RTC_CH0,
+			((sec & 0xffff) << 16L) + ((frac & 0xffff0000) >> 16)
+		);
+		
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static bool
+process_next_alarm (io_cc2652_cpu_t *this) {
+	if (this->alarms != &s_null_io_alarm) {
+		volatile io_time_t t = cc2652_time_clock_get_time ((io_t*) this,&this->rtc);
+		
+		if (t.ns >= this->alarms->when.ns) {
+			io_alarm_t *alarm = this->alarms;
+			this->alarms = this->alarms->next_alarm;
+			alarm->next_alarm = NULL;
+			alarm->at->event_handler (alarm->at);		
+			//
+			// add tollerance check ...
+			//
+			return true;
+		} else {
+			//while(1) {}
+		}
+	}
+	return false;
+}
+
+static void
+process_alarm_queue (io_event_t *ev) {
+	io_cc2652_cpu_t *this = ev->user_value;
+	uint32_t count = 0;
+	
+	while (process_next_alarm (this)) {
+		count++;
+	}
+	
+	if (count) {
+		set_time_clock_alarm_time (this);
+	}
+}
+
+void
+cc2652_time_clock_interrupt (void *user_value) {
+	io_cc2652_cpu_t *this = user_value;
+	AONRTCEventClear(AON_RTC_CH0);
+	io_enqueue_event (user_value,&this->rtc.alarm);
+}
+
+static void
+start_time_clock (io_cc2652_cpu_t *this) {
+
+	this->rtc.io = (io_t*) this;
+	
+	if (io_cpu_clock_start ((io_t*) this,this->rtc.clock)) {
+
+		AONRTCReset();
+		
+		AONRTCDelayConfig (AON_RTC_CONFIG_DELAY_NODELAY);
+
+		// compare channel 0, will also wakeup the cpu core
+		AONEventMcuWakeUpSet(AON_EVENT_MCU_WU0, AON_EVENT_RTC0);
+		
+		AONRTCChannelEnable(AON_RTC_CH0);
+		AONRTCCombinedEventConfig(AON_RTC_CH0);
+
+		AONRTCEnable ();
+
+		SysCtrlAonSync ();
+		
+		initialise_io_event (&this->rtc.alarm,process_alarm_queue,this);
+		
+		register_io_interrupt_handler (
+			(io_t*) this,INT_AON_RTC_COMB,cc2652_time_clock_interrupt,this
+		);
+
+		{
+			int32_t irqn = CMSIS_IRQn(INT_AON_RTC_COMB);
+			NVIC_SetPriority (irqn,NORMAL_INTERRUPT_PRIORITY);
+			NVIC_EnableIRQ (irqn);
+		}
+		
+	}
+}
+
+static io_time_t
+cc2652_get_time (io_t *io) {
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	return cc2652_time_clock_get_time (io,&this->rtc);
+}
+
 //
 // io methods
 //
@@ -805,6 +1146,24 @@ static bool
 cc2652_enqueue_task (io_t *io,vref_t r_task) {
 	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
 	return io_value_pipe_put_value (this->tasks,r_task);
+}
+
+static bool
+cc2652_do_next_task (io_t *io) {
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	vref_t r_task;
+	if (io_value_pipe_get_value (this->tasks,&r_task)) {
+		vref_t const *argv;
+		uint32_t argc;
+		
+		if (io_vector_value_get_values (r_task,&argc,&argv)) {
+			
+			// ...
+		
+			return true;
+		}
+	}
+	return false;
 }
 
 static bool
@@ -901,7 +1260,6 @@ cc2652_set_io_pin_to_alternate (io_t *io,io_pin_t rpin) {
 	cc2652_configure_io_pin_as_alternate (pin);
 }
 
-
 //
 // so we can turn clock and power off
 //
@@ -916,7 +1274,7 @@ cc2652_io_pin_is_valid (io_t *io,io_pin_t rpin) {
 }
 
 static void
-cc2652_set_io_pin_interrupt (io_t *io,io_pin_t rpin) {
+cc2652_set_io_pin_interrupt (io_t *io,io_pin_t rpin,io_interrupt_handler_t *h) {
 /*
 	switch (base3_gpio_pin_config_interrupt(pin)) {
 	  case GPIO_INTERRUPT_RISING:
@@ -963,6 +1321,56 @@ cc2652_get_prbs_random_u32 (io_t *io) {
 }
 
 static void
+cc2652_time_clock_enqueue_alarm (io_t *io,io_alarm_t *alarm) {
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	
+	ENTER_CRITICAL_SECTION(io);
+
+	if (alarm->when.ns < this->alarms->when.ns) {
+		alarm->next_alarm = this->alarms;
+		this->alarms = alarm;
+		if (!set_time_clock_alarm_time (this)) {
+			io_panic (io,IO_PANIC_TIME_CLOCK_ERROR);
+		}
+	} else {
+		io_alarm_t *pre = this->alarms;
+		while (alarm->when.ns > pre->when.ns) {
+			if (pre->next_alarm == &s_null_io_alarm) {
+				break;
+			}
+			pre = pre->next_alarm;
+		}
+		alarm->next_alarm = pre->next_alarm;
+		pre->next_alarm = alarm;
+	}
+
+	EXIT_CRITICAL_SECTION(io);
+}
+
+static void
+cc2652_time_clock_dequeue_alarm (io_t *io,io_alarm_t *alarm) {
+	if (alarm->next_alarm != NULL) {
+		ENTER_CRITICAL_SECTION (io);
+		if (alarm == io->alarms) {
+			io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+			io->alarms = io->alarms->next_alarm;
+			set_time_clock_alarm_time (this);
+		} else {
+			io_alarm_t *pre = io->alarms;
+			while (pre) {
+				if (alarm == pre->next_alarm) {
+					pre->next_alarm = alarm->next_alarm;
+					break;
+				}
+				pre = pre->next_alarm;
+			}
+		}
+		alarm->next_alarm = NULL;
+		EXIT_CRITICAL_SECTION (io);
+	}
+}
+
+static void
 cc2652_panic (io_t *io,int code) {
 	DISABLE_INTERRUPTS;
 	while (1);
@@ -980,18 +1388,21 @@ add_io_implementation_cpu_methods (io_implementation_t *io_i) {
 	io_i->get_byte_memory = cc2652_io_get_byte_memory;
 	io_i->get_short_term_value_memory = cc2652_io_get_stvm;
 	io_i->do_gc = cc2652_do_gc;
+	io_i->is_first_run = cc2652_is_first_run;
+	io_i->uid = cc2652_get_uid;
+	io_i->do_gc = cc2652_do_gc;
 	io_i->get_next_prbs_u32 = cc2652_get_prbs_random_u32;
 	io_i->signal_task_pending = cc2652_signal_task_pending;
 	io_i->enqueue_task = cc2652_enqueue_task;
-//	io_i->do_next_task = cc2652_do_next_task;
+	io_i->do_next_task = cc2652_do_next_task;
 	io_i->signal_event_pending = cc2652_signal_event_pending;
 	io_i->enter_critical_section = cc2652_enter_critical_section;
 	io_i->exit_critical_section = cc2652_exit_critical_section;
 	io_i->in_event_thread = cc2652_is_in_event_thread;
 	io_i->wait_for_event = cc2652_wait_for_event;
-//	io_i->get_time = cc2652_get_time,
-//	io_i->enqueue_alarm = nrf_time_clock_enqueue_alarm;
-//	io_i->dequeue_alarm = nrf_time_clock_dequeue_alarm;
+	io_i->get_time = cc2652_get_time,
+	io_i->enqueue_alarm = cc2652_time_clock_enqueue_alarm;
+	io_i->dequeue_alarm = cc2652_time_clock_dequeue_alarm;
 	io_i->register_interrupt_handler = cc2652_register_interrupt_handler;
 	io_i->unregister_interrupt_handler = cc2652_unregister_interrupt_handler;
 	io_i->wait_for_all_events = cc2652_for_all_events;
@@ -999,9 +1410,9 @@ add_io_implementation_cpu_methods (io_implementation_t *io_i) {
 	io_i->set_io_pin_input = cc2652_set_io_pin_to_input,
 	io_i->set_io_pin_alternate = cc2652_set_io_pin_to_alternate,
 	io_i->set_io_pin_interrupt = cc2652_set_io_pin_interrupt,
-//	io_i->read_from_io_pin = cc2652_read_io_input_pin,
+	io_i->read_from_io_pin = cc2652_read_io_input_pin,
 	io_i->write_to_io_pin = cc2652_write_to_io_pin,
-//	io_i->toggle_io_pin = cc2652_toggle_io_pin,
+	io_i->toggle_io_pin = cc2652_toggle_io_pin,
 	io_i->valid_pin = cc2652_io_pin_is_valid,
 	io_i->release_io_pin = cc2652_release_io_pin,
 	io_i->panic = cc2652_panic;
@@ -1027,12 +1438,15 @@ initialise_cpu_io (io_t *io) {
 	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
 
 	this->in_event_thread = false;
-
+	this->first_run = cc2652_io_config_is_first_run ();
+	
 	io_cpu_clock_start (io,io_get_core_clock(io));
 
 	register_io_interrupt_handler (io,INT_PENDSV,event_thread,io);
 	register_io_interrupt_handler (io,INT_HARD_FAULT,hard_fault,io);
 
+	start_time_clock (this);
+	
 	this->prbs_state[0] = io_get_random_u32(io);
 	this->prbs_state[1] = 0xf542d2d3;
 	this->prbs_state[2] = 0x6fa035c3;
@@ -1089,6 +1503,7 @@ int main(void);
 
 void
 cc2652_core_reset (void) {
+	SetupTrimDevice();
 	initialise_c_runtime ();
 	tune_cpu ();
 	main ();
@@ -1218,6 +1633,30 @@ TEST_BEGIN(test_io_events_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_time_clock_alarms_1) {
+	volatile uint32_t a = 0;
+	io_alarm_t alarm;
+	io_event_t ev;
+	io_time_t t;
+	initialise_io_event (&ev,test_io_events_1_ev,(void*) &a);
+	
+	t = io_get_time (TEST_IO);
+	initialise_io_alarm (
+		&alarm,&ev,&ev,
+		(io_time_t) {t.ns + millisecond_time(200).ns}
+	);
+
+	io_enqueue_alarm (TEST_IO,&alarm);
+	
+	while (a == 0);
+	VERIFY (a == 1,NULL);
+
+	VERIFY ((io_get_time (TEST_IO).ns - t.ns) >= millisecond_time(200).ns,NULL);
+	
+	
+}
+TEST_END
+
 UNIT_SETUP(setup_io_cpu_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
 }
@@ -1230,6 +1669,7 @@ io_cpu_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_random_1,
 		test_io_events_1,
+		test_time_clock_alarms_1,
 		0
 	};
 	unit->name = "io cpu";
