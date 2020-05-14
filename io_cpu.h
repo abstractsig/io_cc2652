@@ -1,263 +1,161 @@
 /*
  *
- * io cpu
- *
  */
 #ifndef io_cpu_H_
 #define io_cpu_H_
 #include <io_core.h>
+#include <cc2652rb.h>
 
-//
-// power domain
-//
+void cc2652_do_gc (io_t*,int32_t);
+io_cpu_clock_pointer_t cc2652_get_core_clock (io_t*);
+io_uid_t const* cc2652_get_uid (io_t*);
+void cc2652_signal_event_pending (io_t*);
+void cc2652_wait_for_event (io_t*);
+void cc2652_wait_for_all_events (io_t*);
+void cc2652_set_io_pin_to_output (io_t*,io_pin_t);
+void cc2652_set_io_pin_to_input (io_t*,io_pin_t);
+void cc2652_set_io_pin_to_alternate (io_t*,io_pin_t);
+void cc2652_release_io_pin (io_t*,io_pin_t);
+int32_t cc2652_read_io_input_pin (io_t*,io_pin_t);
+void cc2652_toggle_io_pin (io_t*,io_pin_t);
+bool cc2652_io_pin_is_valid (io_t *io,io_pin_t rpin);
+uint32_t cc2652_get_prbs_random_u32 (io_t *io);
+bool cc2652_enter_critical_section (io_t*);
+void cc2652_exit_critical_section (io_t*,bool);
+bool cc2652_is_in_event_thread (io_t*);
+io_time_t cc2652_get_time (io_t*);
+void cc2652_register_interrupt_handler (io_t*,int32_t,io_interrupt_action_t,void*);
+bool	cc2652_unregister_interrupt_handler (io_t*,int32_t,io_interrupt_action_t);
+void cc2652_log (io_t*,char const*,va_list);
+void cc2652_time_clock_enqueue_alarm (io_t*,io_alarm_t*);
+void cc2652_time_clock_dequeue_alarm (io_t*,io_alarm_t*);
+bool cc2652_clear_first_run (void);
+bool cc2652_is_first_run (io_t*);
 
-typedef struct PACK_STRUCTURE io_cc2652_cpu_power_domain {
-    IO_CPU_POWER_DOMAIN_STRUCT_MEMBERS
-    uint32_t prcm_domain_identifier;
-} io_cc2652_cpu_power_domain_t;
-
-extern io_cc2652_cpu_power_domain_t peripheral_power_domain;
-
-//
-// inline io power domain implementation
-//
-INLINE_FUNCTION void
-turn_on_io_power_domain (io_t* io,io_cpu_power_domain_pointer_t pd) {
-	return io_cpu_power_domain_ro_pointer(pd)->implementation->turn_on(io,pd);
-}
-
-INLINE_FUNCTION void
-turn_off_io_power_domain (io_t* io,io_cpu_power_domain_pointer_t pd) {
-	return io_cpu_power_domain_ro_pointer(pd)->implementation->turn_off(io,pd);
-}
-
-//
-// clocks
-//
-typedef struct PACK_STRUCTURE cc2652_hf_rc_oscillator {
-	IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
-} cc2652_hf_rc_oscillator_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_implementation;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
-
-INLINE_FUNCTION bool
-cpu_clock_is_cc2652_hf_rc_oscillator (io_cpu_clock_pointer_t clock) {
-	return io_cpu_clock_has_implementation (clock,&cc2652_hf_rc_48_oscillator_implementation);
-}
-
-typedef struct PACK_STRUCTURE cc2652_hp_oscillator {
-	IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
-	float64_t frequency;
-} cc2652_hp_oscillator_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
-
-INLINE_FUNCTION bool
-cpu_clock_is_cc2652_hp_oscillator (io_cpu_clock_pointer_t clock) {
-	return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
-}
-
-typedef struct PACK_STRUCTURE cc2652_sclk_lf {
-	IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
-} cc2652_sclk_lf_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation;
-
-typedef struct cc2652_core_clock {
-	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
-} cc2652_core_clock_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
-
-typedef struct cc2652_rtc_clock {
-	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
-} cc2652_rtc_clock_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation;
-
-typedef struct cc2652_peripheral_clock {
-	IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
-	uint32_t prcm_peripheral_id;
-} cc2652_peripheral_clock_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation;
-
-//
-// pins
-//
-
-typedef union PACK_STRUCTURE {
-	io_pin_t io;
-	uint32_t u32;
-	struct PACK_STRUCTURE {
-		uint32_t	number:6;
-		uint32_t ioc_port_id:6;
-		uint32_t active_level:1;
-		uint32_t initial_state:1;
-		uint32_t pull_mode:2;
-		uint32_t drive_level:3;
-		uint32_t hysteresis:1;
-		uint32_t :12;
-	} cc;
-} cc2652_io_pin_t;
-
-#define cc2652_io_pin_number(pin)				(pin).cc.number
-#define cc2652_io_pin_pull_mode(pin)			(pin).cc.pull_mode
-#define cc2652_io_pin_active_level(pin)		(pin).cc.active_level
-#define cc2652_io_pin_initial_state(pin)		(pin).cc.initial_state
-#define cc2652_io_pin_ioc_port_id(pin)			(pin).cc.ioc_port_id
-
-#define IO_PIN_ACTIVE_LEVEL_HIGH		1
-#define IO_PIN_ACTIVE_LEVEL_LOW		0
-
-#define IO_PIN_LEVEL_ACTIVE			1
-#define IO_PIN_LEVEL_INACTIVE			0
-
-#define IO_PIN_NO_PULL		0		//	IOC_NO_IOPULL
-#define IO_PIN_PULL_UP		1		// IOC_IOPULL_UP
-#define IO_PIN_PULL_DOWN	2		// IOC_IOPULL_DOWN
-
-#define def_cc2652_io_input_pin(pin_number,active,pull) (cc2652_io_pin_t) {\
-		.cc.number = pin_number,\
-		.cc.active_level = active,\
-		.cc.initial_state = IO_PIN_LEVEL_INACTIVE,\
-		.cc.pull_mode = pull,\
-		.cc.drive_level = 0,\
-		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = IOC_PORT_GPIO,\
-	}
-
-#define def_cc2652_io_output_pin(pin_number,active,initial) (cc2652_io_pin_t) {\
-		.cc.number = pin_number,\
-		.cc.active_level = active,\
-		.cc.initial_state = initial,\
-		.cc.pull_mode = IO_PIN_NO_PULL,\
-		.cc.drive_level = 0,\
-		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = IOC_PORT_GPIO,\
-	}
-
-#define def_cc2652_io_alternate_pin(pin_number,active,IOC) (cc2652_io_pin_t) {\
-		.cc.number = pin_number,\
-		.cc.active_level = active,\
-		.cc.initial_state = IO_PIN_LEVEL_INACTIVE,\
-		.cc.pull_mode = IO_PIN_NO_PULL,\
-		.cc.drive_level = 0,\
-		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = IOC,\
-	}
-
-#define CC2652_INVALID_PIN_NUMBER	0x3f
-
-#define def_cc2652_null_io_pin() (cc2652_io_pin_t) {\
-		.cc.number = CC2652_INVALID_PIN_NUMBER,\
-		.cc.active_level = IO_PIN_ACTIVE_LEVEL_HIGH,\
-		.cc.initial_state = IO_PIN_LEVEL_INACTIVE,\
-		.cc.pull_mode = IO_PIN_NO_PULL,\
-		.cc.drive_level = 0,\
-		.cc.hysteresis = 0,\
-		.cc.ioc_port_id = IOC_PORT_GPIO,\
-	}
+#define SPECIALISE_IO_CPU_IMPLEMENTATION(S) \
+	SPECIALISE_IO_IMPLEMENTATION(S) \
+	.do_gc = cc2652_do_gc,\
+	.signal_event_pending = cc2652_signal_event_pending,\
+	.uid = cc2652_get_uid,\
+	.is_first_run = cc2652_is_first_run,\
+	.wait_for_event = cc2652_wait_for_event,\
+	.wait_for_all_events = cc2652_wait_for_all_events,\
+	.enqueue_alarm = cc2652_time_clock_enqueue_alarm,\
+	.dequeue_alarm = cc2652_time_clock_dequeue_alarm,\
+	.get_time = cc2652_get_time,\
+	.set_io_pin_output = cc2652_set_io_pin_to_output,\
+	.set_io_pin_input = cc2652_set_io_pin_to_input,\
+	.set_io_pin_alternate = cc2652_set_io_pin_to_alternate,\
+	.set_io_pin_interrupt = cc2652_set_io_pin_interrupt,\
+	.read_from_io_pin = cc2652_read_io_input_pin,\
+	.write_to_io_pin = cc2652_write_to_io_pin,\
+	.toggle_io_pin = cc2652_toggle_io_pin,\
+	.valid_pin = cc2652_io_pin_is_valid,\
+	.release_io_pin = cc2652_release_io_pin,\
+	.get_next_prbs_u32 = cc2652_get_prbs_random_u32,\
+	.enter_critical_section = cc2652_enter_critical_section,\
+	.exit_critical_section = cc2652_exit_critical_section,\
+	.in_event_thread = cc2652_is_in_event_thread,\
+	.register_interrupt_handler = cc2652_register_interrupt_handler,\
+	.unregister_interrupt_handler = cc2652_unregister_interrupt_handler,\
+	.log = cc2652_log,\
+   /**/
 
 typedef struct PACK_STRUCTURE cc2652_time_clock {
-
-	io_cpu_clock_pointer_t clock;
-	io_event_t alarm;
-	io_t *io;
-	
+    io_cpu_clock_pointer_t clock;
+    io_event_t alarm;
+    io_t *io;
 } cc2652_time_clock_t;
 
-//
-// cpu
-//
 #define CC2652_IO_CPU_STRUCT_MEMBERS \
-	IO_STRUCT_MEMBERS				\
-	io_value_memory_t *vm;\
-	io_byte_memory_t *bm;\
-	uint32_t in_event_thread;\
-	io_value_pipe_t *tasks;\
-	io_cpu_clock_pointer_t gpio_clock; \
-	uint32_t prbs_state[4]; \
-	cc2652_time_clock_t rtc;\
-	uint32_t first_run;\
-	/**/
+    IO_STRUCT_MEMBERS               \
+    uint32_t in_event_thread;\
+    io_value_pipe_t *tasks;\
+    io_cpu_clock_pointer_t gpio_clock; \
+    uint32_t prbs_state[4]; \
+    cc2652_time_clock_t rtc;\
+    uint32_t first_run;\
+    /**/
 
 typedef struct PACK_STRUCTURE io_cc2652_cpu {
-	CC2652_IO_CPU_STRUCT_MEMBERS
+    CC2652_IO_CPU_STRUCT_MEMBERS
 } io_cc2652_cpu_t;
 
-void	initialise_cpu_io (io_t*);
+void	initialise_io_cpu (io_t*);
+void	cc2652_start_gpio_clock (io_t*);
+void	start_time_clock (io_cc2652_cpu_t*);
 
-//
-// sockets
-//
-
-typedef struct PACK_STRUCTURE cc2652_uart {
-	IO_SOCKET_STRUCT_MEMBERS
-	
-	io_t *io;
-	io_encoding_implementation_t const *encoding;
-	io_cpu_clock_pointer_t peripheral_clock;
-
-	io_encoding_pipe_t *tx_pipe;
-	io_event_t transmit_complete;
-	io_byte_pipe_t *rx_pipe;
-
-	cc2652_io_pin_t tx_pin;
-	cc2652_io_pin_t rx_pin;
-	cc2652_io_pin_t rts_pin;
-	cc2652_io_pin_t cts_pin;
-	
-	uint32_t register_base_address;
-	int32_t interrupt_number;
-	uint32_t baud_rate;
-
-} cc2652_uart_t;
+#include <cc2652rb_pins.h>
+#include <cc2652rb_uart.h>
+#include <cc2652rb_radio.h>
 
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
 //
-// cc2652 Implementtaion
+// implementation
 //
 //-----------------------------------------------------------------------------
-#include <cc2652rb.h>
-
-//
-// because ti SDK does not follow cmsis convention for rnterrupt numbering
-//
-typedef int32_t IRQn_Type;
-#define SysTick_IRQn (INT_SYSTICK - 16)
-#define CMSIS_IRQn(N)	((int32_t)(N) - 16)
-#include <cmsis/core_cm4.h>
-
-#define NUMBER_OF_ARM_INTERRUPT_VECTORS	16L
-#define NUMBER_OF_NRF_INTERRUPT_VECTORS	NUM_INTERRUPTS
-#define NUMBER_OF_INTERRUPT_VECTORS	(NUMBER_OF_ARM_INTERRUPT_VECTORS + NUMBER_OF_NRF_INTERRUPT_VECTORS)
-
-static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
-
-#define ENABLE_INTERRUPTS	\
-	do {	\
-		__DMB();	\
-		__enable_irq();	\
-	} while (0)
-
-#define DISABLE_INTERRUPTS	\
-	do {	\
-		__disable_irq();	\
-		__DMB();	\
-	} while (0)
-
-
+#include <cc2652rb_clocks.h>
+#include <cc2652rb_time.h>
 /*
  *-----------------------------------------------------------------------------
  *
- * the initial io state settings
+ * CPU Clock Tree
+ *
+ * On reset
+ *
+ *    +----------+                               +---------+
+ *    | HF_RC_48 |-+---------------------------->| CPU     |        // 48MHz
+ *    +----------+ |                             +---------+
+ *                 |
+ *                 |    +-------------+          +---------+
+ *                 +--->| SKLK_LF     |--------->| RTC     |        //
+ *                 |    +-------------+          +---------+
+ *                 |
+ *                 |    +-------------+          +---------+
+ *                 +--->| PERDMACLK/1 |--------->| UART0   |        //
+ *                 |    +-------------+          +---------+
+ *
  *
  *-----------------------------------------------------------------------------
  */
+
+void
+cc2652_start_gpio_clock (io_t *io) {
+    io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+    io_cpu_clock_start (io,this->gpio_clock);
+}
+
+INLINE_FUNCTION uint32_t prbs_rotl(const uint32_t x, int k) {
+    return (x << k) | (x >> (32 - k));
+}
+
+uint32_t
+cc2652_get_prbs_random_u32 (io_t *io) {
+    io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+    uint32_t *s = this->prbs_state;
+    const uint32_t result = prbs_rotl (s[0] + s[3], 7) + s[0];
+
+    const uint32_t t = s[1] << 9;
+
+    s[2] ^= s[0];
+    s[3] ^= s[1];
+    s[1] ^= s[2];
+    s[0] ^= s[3];
+
+    s[2] ^= t;
+
+    s[3] = prbs_rotl (s[3], 11);
+
+    return result;
+}
+
 static PERSISTANT_MEMORY_SECTION io_persistant_state_t io_config = {
-	.first_run_flag = IO_FIRST_RUN_SET,
-	.power_cycles = 0,
-	.uid = {{0}},
-	.secret = {{0}},
-	.shared = {{0}},
+    .first_run_flag = IO_FIRST_RUN_SET,
+    .power_cycles = 0,
+    .uid = {{0}},
+    .secret = {{0}},
+    .shared = {{0}},
 };
 
 /*
@@ -269,943 +167,67 @@ static PERSISTANT_MEMORY_SECTION io_persistant_state_t io_config = {
  */
 static uint8_t
 disableFlashCache(void) {
-	uint8_t mode = VIMSModeGet(VIMS_BASE);
+    uint8_t mode = VIMSModeGet(VIMS_BASE);
 
-	VIMSLineBufDisable(VIMS_BASE);
+    VIMSLineBufDisable(VIMS_BASE);
 
-	if (mode != VIMS_MODE_DISABLED) {
-		VIMSModeSet(VIMS_BASE, VIMS_MODE_DISABLED);
-		while (VIMSModeGet(VIMS_BASE) != VIMS_MODE_DISABLED);
-	}
+    if (mode != VIMS_MODE_DISABLED) {
+        VIMSModeSet(VIMS_BASE, VIMS_MODE_DISABLED);
+        while (VIMSModeGet(VIMS_BASE) != VIMS_MODE_DISABLED);
+    }
 
-	return (mode);
+    return (mode);
 }
 
 static void
 restoreFlashCache(uint8_t mode) {
-	if (mode != VIMS_MODE_DISABLED) {
-		VIMSModeSet(VIMS_BASE, VIMS_MODE_ENABLED);
-	}
+    if (mode != VIMS_MODE_DISABLED) {
+        VIMSModeSet(VIMS_BASE, VIMS_MODE_ENABLED);
+    }
 
-	VIMSLineBufEnable(VIMS_BASE);
+    VIMSLineBufEnable(VIMS_BASE);
 }
 
-static bool
-cc2652io_config_clear_first_run (void) {
-	if (io_config.first_run_flag == IO_FIRST_RUN_SET) {
-		io_persistant_state_t new_ioc = io_config;
-		uint8_t mode = disableFlashCache ();
-		uint32_t sector_address = (uint32_t) &io_config;
-		
-		DISABLE_INTERRUPTS;
-		
-		new_ioc.first_run_flag = IO_FIRST_RUN_CLEAR;
+bool
+cc2652_clear_first_run (void) {
+    if (io_config.first_run_flag == IO_FIRST_RUN_SET) {
+        io_persistant_state_t new_ioc = io_config;
+        uint8_t mode = disableFlashCache ();
+        uint32_t sector_address = (uint32_t) &io_config;
 
-		if (FlashProtectionGet (sector_address) == FLASH_NO_PROTECT) {
-			FlashSectorErase (sector_address);			
-			FlashProgram (
-				(uint8_t*) &new_ioc,sector_address,sizeof(io_persistant_state_t)
-			);
-		}
-		
-		sector_address = FlashCheckFsmForError ();
-		
-		restoreFlashCache (mode);
-		
-		ENABLE_INTERRUPTS;
-		
-		return memcmp (&new_ioc,&io_config,sizeof(io_persistant_state_t)) == 0;
-	} else {
-		return true;
-	}
+        DISABLE_INTERRUPTS;
+
+        new_ioc.first_run_flag = IO_FIRST_RUN_CLEAR;
+
+        if (FlashProtectionGet (sector_address) == FLASH_NO_PROTECT) {
+            FlashSectorErase (sector_address);
+            FlashProgram (
+                (uint8_t*) &new_ioc,sector_address,sizeof(io_persistant_state_t)
+            );
+        }
+
+        sector_address = FlashCheckFsmForError ();
+
+        restoreFlashCache (mode);
+
+        ENABLE_INTERRUPTS;
+
+        return memcmp (&new_ioc,&io_config,sizeof(io_persistant_state_t)) == 0;
+    } else {
+        return true;
+    }
 }
 
 static bool
 cc2652_io_config_is_first_run (void) {
-	bool first = (io_config.first_run_flag == IO_FIRST_RUN_SET);
-	cc2652io_config_clear_first_run ();
-	return first;
+    bool first = (io_config.first_run_flag == IO_FIRST_RUN_SET);
+    cc2652_clear_first_run ();
+    return first;
 }
 
-static io_uid_t const*
-cc2652_get_uid (io_t *io) {
-	return &io_config.uid;
-}
-
-bool
-cc2652_is_first_run (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	return this->first_run;
-}
-
-static void
-null_interrupt_handler (void *w) {
-	while(1);
-}
-
-//
-// power domains
-//
-
-bool
-controlled_power_domain_turn_on (io_cpu_power_domain_pointer_t pd) {
-	io_cc2652_cpu_power_domain_t const *this = (io_cc2652_cpu_power_domain_t const *) (
-		io_cpu_power_domain_ro_pointer (pd)
-	);
-	
-	if (PRCMPowerDomainStatus(this->prcm_domain_identifier) == PRCM_DOMAIN_POWER_OFF) {
-	  PRCMPowerDomainOn (this->prcm_domain_identifier);
-	  while(PRCMPowerDomainStatus(this->prcm_domain_identifier) != PRCM_DOMAIN_POWER_ON);
-	  PRCMLoadSet();
-	}
-
-	if (io_cpu_power_domain_rw_pointer (pd)) {
-		io_cpu_power_domain_rw_pointer(pd)->reference_count ++;
-	}
-	
-	return true;
-}
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-cpu_core_power_domain_implementation = {
-	.turn_off = io_power_domain_no_operation,
-	.turn_on = io_power_domain_no_operation,
-};
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-bus_power_domain_implementation = {
-	.turn_off = io_power_domain_no_operation,
-	.turn_on = io_power_domain_no_operation,
-};
-
-static void
-turn_peripheral_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
-	controlled_power_domain_turn_on (pd);
-}
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-peripheral_power_domain_implementation = {
-	.turn_off = io_power_domain_no_operation,
-	.turn_on = turn_peripheral_power_domain_on,
-};
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-radio_power_domain_implementation = {
-	.turn_off = io_power_domain_no_operation,
-	.turn_on = io_power_domain_no_operation,
-};
-
-static void
-turn_serial_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
-	controlled_power_domain_turn_on (pd);
-}
-
-static EVENT_DATA io_cpu_power_domain_implementation_t
-serial_power_domain_implementation = {
-	.turn_off = io_power_domain_no_operation,
-	.turn_on = turn_serial_power_domain_on,
-};
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-vims_power_domain_implementation = {
-	.turn_off = io_power_domain_no_operation,
-	.turn_on = io_power_domain_no_operation,
-};
-
-EVENT_DATA io_cc2652_cpu_power_domain_t always_on_power_domain = {
-	.implementation = &cpu_core_power_domain_implementation,
-	.prcm_domain_identifier = 0, // none
-};
-
-EVENT_DATA io_cc2652_cpu_power_domain_t cpu_core_power_domain = {
-	.implementation = &cpu_core_power_domain_implementation,
-	.prcm_domain_identifier = PRCM_DOMAIN_MCU, //
-};
-
-io_cc2652_cpu_power_domain_t peripheral_power_domain = {
-	.implementation = &peripheral_power_domain_implementation,
-	.prcm_domain_identifier = PRCM_DOMAIN_PERIPH,
-};
-
-io_cc2652_cpu_power_domain_t serial_power_domain = {
-	.implementation = &serial_power_domain_implementation,
-	.prcm_domain_identifier = PRCM_DOMAIN_SERIAL,
-};
-
-//
-// clocks
-//
-
-static bool
-cc2652_hf_rc_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
-	return true;
-}
-
-static float64_t
-cc2652_hf_rc_48_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
-	return 48000000.0;
-}
-
-//
-// oscillators seem to be outside any power domain
-//
-EVENT_DATA io_cpu_clock_implementation_t
-cc2652_hf_rc_48_oscillator_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = cc2652_hf_rc_48_oscillator_get_current_frequency,
-	.get_expected_frequency = cc2652_hf_rc_48_oscillator_get_current_frequency,
-	.get_power_domain = get_always_on_io_power_domain,
-	.start = cc2652_hf_rc_oscillator_start,
-	.stop = NULL,
-};
-
-static float64_t
-cc2652_hf_rc_24_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
-	return 24000000.0;
-}
-
-EVENT_DATA io_cpu_clock_implementation_t
-cc2652_hf_rc_24_oscillator_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
-	.get_expected_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
-	.get_power_domain = get_always_on_io_power_domain,
-	.start = cc2652_hf_rc_oscillator_start,
-	.stop = NULL,
-};
-
-static float64_t
-cc2652_hp_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
-	cc2652_hp_oscillator_t const *c = (cc2652_hp_oscillator_t const*) (
-		io_cpu_clock_ro_pointer (this)
-	);
-	return c->frequency;
-}
-
-//
-// oscilator registers are accessed via this DDI thing
-//
-static bool
-cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
-		
-	return OSC_IsHPOSCEnabled();
-/*		
-
- 
-	if (!OSC_IsHPOSCEnabled()) {
-		
-		OSC_HPOSCInitializeFrequencyOffsetParameters ();
-
-		
-		return true;
-	}
-	
-	return false;
-*/
-}
-
-EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
-	.get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
-	.get_power_domain = get_always_on_io_power_domain,
-	.start = cc2652_hp_oscillator_start,
-	.stop = NULL,
-};
-
-bool
-cc2652_clock_is_hp_oscillator (io_cpu_clock_pointer_t clock) {
-	return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
-}
-
-static float64_t
-cc2652_sclk_lf_get_current_frequency (io_cpu_clock_pointer_t this) {
-	cc2652_sclk_lf_t const *c = (cc2652_sclk_lf_t const*) (
-		io_cpu_clock_ro_pointer (this)
-	);
-	return io_cpu_clock_get_current_frequency (c->input);
-}
-
-static bool
-cc2652_sclk_lf_start (io_t *io,io_cpu_clock_pointer_t clock) {
-	if (io_cpu_dependant_clock_start_input (io,clock)) {
-		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
-			io_cpu_clock_ro_pointer (clock)
-		);
-	
-		// need to use DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL to select
-		// connect input clock configuration
-
-		if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
-			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_RCOSC_HF);
-//			HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) &= ~DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL_M;
-//			HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) |= DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL_RCOSCHFDLF;
-		} else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
-			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_XOSC_HF);
-		} else {
-			return false;
-		}
-		
-		return true;
-	} else {
-		return false;
-	}
-}
-
-EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = cc2652_sclk_lf_get_current_frequency,
-	.get_expected_frequency = cc2652_sclk_lf_get_current_frequency,
-	.get_power_domain = get_always_on_io_power_domain,
-	.start = cc2652_sclk_lf_start,
-	.stop = NULL,
-};
-
-static float64_t
-cc2652_core_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
-	cc2652_core_clock_t const *this = (cc2652_core_clock_t const*) (
-		io_cpu_clock_ro_pointer (clock)
-	);
-	return io_cpu_clock_get_current_frequency (this->input);
-}
-
-static bool
-cc2652_core_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
-	if (io_cpu_dependant_clock_start_input (io,clock)) {
-		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
-			io_cpu_clock_ro_pointer (clock)
-		);
-
-		if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
-			OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_RCOSC_HF);
-			//or OSCHF_SwitchToRcOscTurnOffXosc().
-		} else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
-			OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
-			while (!OSCHfSourceReady());
-			OSCHfSourceSwitch();
-		} else {
-			return false;
-		}
-		return true;
-	} else {
-		return false;
-	}
-}
-
-static io_cpu_power_domain_pointer_t
-cc2652_core_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
-	return def_io_cpu_power_domain_pointer (&cpu_core_power_domain);
-}
-
-EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = cc2652_core_clock_get_current_frequency,
-	.get_expected_frequency = cc2652_core_clock_get_current_frequency,
-	.get_power_domain = cc2652_core_clock_get_power_domain,
-	.start = cc2652_core_clock_start,
-	.stop = NULL,
-};
-
-static bool
-cc2652_peripheral_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
-	if (io_cpu_dependant_clock_start_input (io,clock)) {
-		cc2652_peripheral_clock_t const *this = (cc2652_peripheral_clock_t const*) (
-			io_cpu_clock_ro_pointer (clock)
-		);
-
-		turn_on_io_power_domain (io,io_cpu_clock_power_domain (clock));
-
-		PRCMPeripheralRunEnable(this->prcm_peripheral_id);
-		PRCMLoadSet();
-		
-		return true;
-	} else {
-		return false;
-	}
-}
-
-static io_cpu_power_domain_pointer_t
-cc2652_peripheral_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
-	return def_io_cpu_power_domain_pointer (&peripheral_power_domain);
-}
-
-EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
-	.get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
-	.get_power_domain = cc2652_peripheral_clock_get_power_domain,
-	.start = cc2652_peripheral_clock_start,
-	.stop = NULL,
-};
-
-static io_cpu_power_domain_pointer_t
-cc2652_serial_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
-	return def_io_cpu_power_domain_pointer (&serial_power_domain);
-}
-
-EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
-	.get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
-	.get_power_domain = cc2652_serial_clock_get_power_domain,
-	.start = cc2652_peripheral_clock_start,
-	.stop = NULL,
-};
-
-static float64_t
-cc2652_rtc_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
-	cc2652_rtc_clock_t const *this = (cc2652_rtc_clock_t const*) (
-		io_cpu_clock_ro_pointer (clock)
-	);
-	return io_cpu_clock_get_current_frequency (this->input);
-}
-
-static bool
-cc2652_rtc_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
-	if (io_cpu_dependant_clock_start_input (io,clock)) {
-		return true;
-	} else {
-		return false;
-	}
-}
-
-EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
-	.specialisation_of = &io_cpu_clock_implementation,
-	.get_current_frequency = cc2652_rtc_clock_get_current_frequency,
-	.get_expected_frequency = cc2652_rtc_clock_get_current_frequency,
-	.get_power_domain = get_always_on_io_power_domain,
-	.start = cc2652_rtc_clock_start,
-	.stop = NULL,
-};
-
-
-//
-// pins
-//
-
-static void
-cc2652_write_to_io_pin (io_t *io,io_pin_t rpin,int32_t state) {
-	cc2652_io_pin_t pin = {rpin};
-	if (state ^ cc2652_io_pin_active_level (pin)) {
-		 GPIO_writeDio (cc2652_io_pin_number(pin),0);
-	} else {
-		 GPIO_writeDio (cc2652_io_pin_number(pin),1);
-	}
-}
-
-static void
-cc2652_toggle_io_pin (io_t *io,io_pin_t rpin) {
-	cc2652_io_pin_t pin = {rpin};
-	GPIO_toggleDio(cc2652_io_pin_number(pin));
-}
-
-static int32_t
-cc2652_read_io_input_pin (io_t *io,io_pin_t rpin) {
-	cc2652_io_pin_t pin = {rpin};
-	return GPIO_readDio(cc2652_io_pin_number(pin));
-}
-
-static void
-cc2652_configure_io_pin_as_output (cc2652_io_pin_t pin) {
-	IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_NO_IOPULL);
-	IOCPinTypeGpioOutput(cc2652_io_pin_number(pin));
-}
+static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
 
 void
-cc2652_configure_io_pin_as_input (cc2652_io_pin_t pin) {
-	switch (cc2652_io_pin_pull_mode(pin)) {
-		case IO_PIN_NO_PULL:
-			IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_NO_IOPULL);
-		break;
-		
-		case IO_PIN_PULL_UP:
-			IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_IOPULL_UP);
-		break;
-		
-		case IO_PIN_PULL_DOWN:
-			IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_IOPULL_DOWN);
-		break;
-	}
-	IOCPinTypeGpioInput(cc2652_io_pin_number(pin));
-}
-
-static void
-cc2652_configure_io_pin_as_alternate (cc2652_io_pin_t pin) {
-	IOCPortConfigureSet (
-		cc2652_io_pin_number (pin),
-		cc2652_io_pin_ioc_port_id (pin),
-		(
-				IOC_NO_IOPULL
-			|	0
-		)
-	);
-}
-
-//
-// sockets
-//
-
-bool
-UARTisEnabled (uint32_t ui32Base) {
-	return (HWREG(ui32Base + UART_O_CTL) & UART_CTL_UARTEN) != 0;
-}
-
-static bool
-cc2652_uart_output_next_buffer (cc2652_uart_t *this) {
-	io_encoding_t *next;
-	if (
-			UARTisEnabled (this->register_base_address)
-		&& io_encoding_pipe_peek (this->tx_pipe,&next)
-	) {
-		const uint8_t *byte,*end;
-		io_encoding_get_ro_bytes (next,&byte,&end);
-		
-		while (byte < end) {
-			UARTCharPut (this->register_base_address,*byte++);
-		}
-		
-		io_enqueue_event (this->io,&this->transmit_complete);
-		return true;
-	} else {
-		return false;
-	}
-}
-
-static void
-cc2652_uart_output_event_handler (io_event_t *ev) {
-	cc2652_uart_t *this = ev->user_value;
-	io_encoding_t *next;
-	
-	if (io_encoding_pipe_get_encoding (this->tx_pipe,&next)) {
-		unreference_io_encoding (next);
-	} else {
-		io_panic (this->io,IO_PANIC_SOMETHING_BAD_HAPPENED);
-	}
-	
-	if (
-			!cc2652_uart_output_next_buffer (this)
-		&&	UARTisEnabled (this->register_base_address)
-		&& io_event_is_valid (io_pipe_event (this->tx_pipe))
-	) {
-		io_enqueue_event (this->io,io_pipe_event (this->tx_pipe));
-	}
-}
-
-void
-cc2652_uart_interrupt (void *user_value) {
-	cc2652_uart_t *this = user_value;
-	uint32_t status = HWREG(this->register_base_address + UART_O_MIS);
-
-	if (status & ( UART_MIS_RTMIS | UART_MIS_RXMIS)) {		
-		// clear interrupt
-		HWREG (this->register_base_address + UART_O_ICR) &= ~UART_ICR_RXIC;
-
-		while (!(HWREG(this->register_base_address + UART_O_FR) & UART_FR_RXFE)) {
-			uint8_t byte = HWREG (this->register_base_address + UART_O_DR);
-			io_byte_pipe_put_byte (this->rx_pipe,byte);
-		}
-		io_enqueue_event (this->io,io_pipe_event (this->rx_pipe));
-	}
-
-	if (status & UART_MIS_TXMIS) {		
-		// clear interrupt
-		HWREG (this->register_base_address + UART_O_ICR) &= ~UART_ICR_TXIC;
-/*
-		while (!(HWREG(base + UART_O_FR) & UART_FR_TXFF)) {
-			if (!pipe_get_element (this->tx_buffer,byte)) {
-				// tx done, disable tx interrupt
-				HWREG (base + UART_O_IMSC) &= ~UART_IMSC_TXIM;
-				ccm3_uart_tx_is_busy (this) = 0;
-				break;
-			}
-		}
-*/
-	}
-
-	if (HWREG(this->register_base_address + UART_O_MIS) != 0) {
-		//panic("uart error");
-	}
-
-}
-
-// has 32byte rx and tx fifos
-static io_socket_t*
-cc2652_uart_initialise (
-	io_socket_t *socket,io_t *io,io_socket_constructor_t const *C
-) {
-	cc2652_uart_t *this = (cc2652_uart_t*) socket;
-	this->io = io;
-
-	this->tx_pipe = mk_io_encoding_pipe (io_get_byte_memory(io),C->transmit_pipe_length);
-	//initialise_io_event (&this->signal_transmit_available,NULL,this);
-
-	this->rx_pipe = mk_io_byte_pipe (
-		io_get_byte_memory(io),io_socket_constructor_receive_pipe_length(C)
-	);
-
-	initialise_io_event (
-		&this->transmit_complete,cc2652_uart_output_event_handler,this
-	);
-
-	// enable interrupts
-	
-	register_io_interrupt_handler (
-		io,this->interrupt_number,cc2652_uart_interrupt,this
-	);
-	
-	return socket;
-}
-
-static io_t*
-cc2652_uart_get_io (io_socket_t *socket) {
-	cc2652_uart_t *this = (cc2652_uart_t*) socket;
-	return this->io;
-}
-
-void
-cc2652_uart_set_baud_rate (cc2652_uart_t *this) {
-	
-	float64_t freq = io_cpu_clock_get_current_frequency (this->peripheral_clock);
-	uint32_t clock = (uint32_t) freq;
-	uint32_t base = this->register_base_address;
-	uint32_t div = (((clock * 8) / this->baud_rate) + 1) / 2;//(clock << 6) / (this->baud_rate * 16);
-	
-	HWREG(base + UART_O_IBRD) = div / 64;
-	HWREG(base + UART_O_FBRD) = div % 64;
-}
-
-#define UART_LCRH_STP1 0
-#define UART_LCRH_NO_PARITY 0
-
-static bool
-cc2652_uart_open (io_socket_t *socket) {
-	cc2652_uart_t *this = (cc2652_uart_t*) socket;
-	
-	if (io_cpu_clock_start (this->io,this->peripheral_clock)) {
-		if (!UARTisEnabled (this->register_base_address)) {
-		
-			io_set_pin_to_output (this->io,this->tx_pin.io);
-			io_set_pin_to_alternate (this->io,this->tx_pin.io);
-			io_set_pin_to_input (this->io,this->rx_pin.io);
-			io_set_pin_to_alternate (this->io,this->rx_pin.io);
-			
-			cc2652_uart_set_baud_rate (this);
-			HWREG(this->register_base_address + UART_O_LCRH) = (
-					UART_LCRH_WLEN_8
-				|	UART_LCRH_STP1
-				|	UART_LCRH_NO_PARITY
-			);
-
-			/*
-			HWREG(this->register_base_address + UART_O_IFLS) = (
-					UART_IFLS_RXSEL_7_8
-				|	UART_IFLS_TXSEL_1_8
-			);
-			*/
-			
-			HWREG (this->register_base_address + UART_O_IMSC) |= (
-					UART_IMSC_RXIM
-			//	|	UART_IMSC_TXIM
-			);
-			
-			// see UART_O_DMACTL
-			
-			UARTEnable (this->register_base_address);
-			
-			{
-				int32_t irqn = CMSIS_IRQn(this->interrupt_number);
-				NVIC_SetPriority (irqn,NORMAL_INTERRUPT_PRIORITY);
-				NVIC_ClearPendingIRQ (irqn);
-				NVIC_EnableIRQ (irqn);
-			}
-		}
-		return true;
-	}
-
-	return false;
-}
-
-static void
-cc2652_uart_close (io_socket_t *socket) {
-}
-
-static io_event_t*
-cc2652_uart_bindr (io_socket_t *socket,io_event_t *rx) {
-	return NULL;
-}
-
-static io_pipe_t*
-cc2652_uart_bindt (io_socket_t *socket,io_event_t *ev) {
-	return NULL;
-}
-
-static io_encoding_t*
-cc2652_uart_new_message (io_socket_t *socket) {
-	cc2652_uart_t *this = (cc2652_uart_t*) socket;
-	return reference_io_encoding (
-		new_io_encoding (this->encoding,io_get_byte_memory(this->io))
-	);
-}
-
-static bool
-cc2652_uart_send_message (io_socket_t *socket,io_encoding_t *encoding) {
-	if (is_io_binary_encoding (encoding)) {
-		cc2652_uart_t *this = (cc2652_uart_t*) socket;
-		if (io_encoding_pipe_put_encoding (this->tx_pipe,encoding)) {
-			if (io_encoding_pipe_count_occupied_slots (this->tx_pipe) == 1) {
-				cc2652_uart_output_next_buffer (this);
-			}
-			return true;
-		} else {
-			unreference_io_encoding (encoding);
-			return false;
-		}
-	} else {
-		return false;
-	}
-}
-
-static size_t
-cc2652_uart_mtu (io_socket_t const *socket) {
-	return 1024;
-}	
-
-EVENT_DATA io_socket_implementation_t cc2652_uart_implementation = {
-	.specialisation_of = NULL,
-	.initialise = cc2652_uart_initialise,
-	.free = NULL,
-	.get_io = cc2652_uart_get_io,
-	.open = cc2652_uart_open,
-	.close = cc2652_uart_close,
-	.bindr = cc2652_uart_bindr,
-	.bindt = cc2652_uart_bindt,
-	.new_message = cc2652_uart_new_message,
-	.send_message = cc2652_uart_send_message,
-	.iterate_inner_sockets = NULL,
-	.iterate_outer_sockets = NULL,
-	.mtu = cc2652_uart_mtu,
-};
-
-
-io_time_t
-cc2652_time_clock_get_time (io_t *io,cc2652_time_clock_t *rtc) {	
-	int64_t sec,frac;
-	
-	{
-		bool h = enter_io_critical_section (io);
-		sec = AONRTCSecGet ();
-		frac = AONRTCFractionGet ();
-		
-		exit_io_critical_section (io,h);
-	}
-	//
-	// q32.32
-	// fraction part is 1000000000/(1 << 32) = 0.2328 ns per unit
-	// multiply by (1 << 16) to use integer multiplication
-	//
-	return (io_time_t) {
-		.nanoseconds = (sec * 1000000000LL) + ((frac * 15259LL) >> 16LL),
-	};
-};
-
-//
-// expects next alarm time to be greater than current time
-//
-static bool
-set_time_clock_alarm_time (io_cc2652_cpu_t *this) {
-	if (this->alarms != &s_null_io_alarm) {
-		uint32_t sec = this->alarms->when.ns/1000000000LL;
-		uint32_t frac = ((this->alarms->when.ns - (sec * 1000000000LL)) * 281474LL) >> 16;
-		
-		AONRTCCompareValueSet (
-			AON_RTC_CH0,
-			((sec & 0xffff) << 16L) + ((frac & 0xffff0000) >> 16)
-		);
-		
-		return true;
-	} else {
-		return false;
-	}
-}
-
-static bool
-process_next_alarm (io_cc2652_cpu_t *this) {
-	if (this->alarms != &s_null_io_alarm) {
-		volatile io_time_t t = cc2652_time_clock_get_time ((io_t*) this,&this->rtc);
-		
-		if (t.ns >= this->alarms->when.ns) {
-			io_alarm_t *alarm = this->alarms;
-			this->alarms = this->alarms->next_alarm;
-			alarm->next_alarm = NULL;
-			alarm->at->event_handler (alarm->at);		
-			//
-			// add tollerance check ...
-			//
-			return true;
-		} else {
-			//while(1) {}
-		}
-	}
-	return false;
-}
-
-static void
-process_alarm_queue (io_event_t *ev) {
-	io_cc2652_cpu_t *this = ev->user_value;
-	uint32_t count = 0;
-	
-	while (process_next_alarm (this)) {
-		count++;
-	}
-	
-	if (count) {
-		set_time_clock_alarm_time (this);
-	}
-}
-
-void
-cc2652_time_clock_interrupt (void *user_value) {
-	io_cc2652_cpu_t *this = user_value;
-	AONRTCEventClear(AON_RTC_CH0);
-	io_enqueue_event (user_value,&this->rtc.alarm);
-}
-
-static void
-start_time_clock (io_cc2652_cpu_t *this) {
-
-	this->rtc.io = (io_t*) this;
-	
-	if (io_cpu_clock_start ((io_t*) this,this->rtc.clock)) {
-
-		AONRTCReset();
-		
-		AONRTCDelayConfig (AON_RTC_CONFIG_DELAY_NODELAY);
-
-		// compare channel 0, will also wakeup the cpu core
-		AONEventMcuWakeUpSet(AON_EVENT_MCU_WU0, AON_EVENT_RTC0);
-		
-		AONRTCChannelEnable(AON_RTC_CH0);
-		AONRTCCombinedEventConfig(AON_RTC_CH0);
-
-		AONRTCEnable ();
-
-		SysCtrlAonSync ();
-		
-		initialise_io_event (&this->rtc.alarm,process_alarm_queue,this);
-		
-		register_io_interrupt_handler (
-			(io_t*) this,INT_AON_RTC_COMB,cc2652_time_clock_interrupt,this
-		);
-
-		{
-			int32_t irqn = CMSIS_IRQn(INT_AON_RTC_COMB);
-			NVIC_SetPriority (irqn,NORMAL_INTERRUPT_PRIORITY);
-			NVIC_EnableIRQ (irqn);
-		}
-		
-	}
-}
-
-static io_time_t
-cc2652_get_time (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	return cc2652_time_clock_get_time (io,&this->rtc);
-}
-
-//
-// io methods
-//
-static io_byte_memory_t*
-cc2652_io_get_byte_memory (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	return this->bm;
-}
-
-static io_value_memory_t*
-cc2652_io_get_stvm (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	return this->vm;
-}
-
-static void
-cc2652_do_gc (io_t *io,int32_t count) {
-	io_value_memory_do_gc (io_get_short_term_value_memory (io),count);
-}
-
-static void
-cc2652_signal_task_pending (io_t *io) {
-	// no action required
-}
-
-static void
-cc2652_signal_event_pending (io_t *io) {
-	SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-}
-
-static bool
-cc2652_enqueue_task (io_t *io,vref_t r_task) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	return io_value_pipe_put_value (this->tasks,r_task);
-}
-
-static bool
-cc2652_do_next_task (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	vref_t r_task;
-	if (io_value_pipe_get_value (this->tasks,&r_task)) {
-		vref_t const *argv;
-		uint32_t argc;
-		
-		if (io_vector_value_get_values (r_task,&argc,&argv)) {
-			
-			// ...
-		
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool
-cc2652_enter_critical_section (io_t *env) {
-	uint32_t interrupts_are_enabled = !(__get_PRIMASK() & 0x1);
-	DISABLE_INTERRUPTS;
-	return interrupts_are_enabled;
-}
-
-void
-cc2652_exit_critical_section (io_t *env,bool were_enabled) {
-	if (were_enabled) {
-		ENABLE_INTERRUPTS;
-	}
-}
-
-static bool
-cc2652_is_in_event_thread (io_t *io) {
-	return ((io_cc2652_cpu_t*) io)->in_event_thread;
-}
-
-static void
-cc2652_wait_for_event (io_t *io) {
-	__WFI();
-}
-
-static void
-cc2652_for_all_events (io_t *io) {
-	io_event_t *event;
-	io_alarm_t *alarm;
-	do {
-		ENTER_CRITICAL_SECTION(io);
-		event = io->events;
-		alarm = io->alarms;
-		EXIT_CRITICAL_SECTION(io);
-	} while (
-			event != &s_null_io_event
-		&&	alarm != &s_null_io_alarm
-	);
-}
-
-static void	
 cc2652_register_interrupt_handler (
 	io_t *io,int32_t number,io_interrupt_action_t handler,void *user_value
 ) {
@@ -1214,7 +236,12 @@ cc2652_register_interrupt_handler (
 	i->user_value = user_value;
 }
 
-static bool	
+static void
+null_interrupt_handler (void *w) {
+	while(1);
+}
+
+bool
 cc2652_unregister_interrupt_handler (
 	io_t *io,int32_t number,io_interrupt_action_t handler
 ) {
@@ -1228,195 +255,10 @@ cc2652_unregister_interrupt_handler (
 	}
 }
 
-//
-// need power domain and clock enabled ...
-// same for all pins
-//
 static void
-cc2652_start_gpio_clock (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	io_cpu_clock_start (io,this->gpio_clock);
-}
-
-static void
-cc2652_set_io_pin_to_output (io_t *io,io_pin_t rpin) {
-	cc2652_io_pin_t pin = {rpin};
-	cc2652_start_gpio_clock (io);
-	cc2652_write_to_io_pin (io,rpin,cc2652_io_pin_initial_state(pin));	
-	cc2652_configure_io_pin_as_output (pin);
-}
-
-static void
-cc2652_set_io_pin_to_input (io_t *io,io_pin_t rpin) {
-	cc2652_io_pin_t pin = {rpin};
-	cc2652_start_gpio_clock (io);
-	cc2652_configure_io_pin_as_input (pin);
-}
-
-static void
-cc2652_set_io_pin_to_alternate (io_t *io,io_pin_t rpin) {
-	cc2652_io_pin_t pin = {rpin};
-	cc2652_start_gpio_clock (io);
-	cc2652_configure_io_pin_as_alternate (pin);
-}
-
-//
-// so we can turn clock and power off
-//
-static void
-cc2652_release_io_pin (io_t *io,io_pin_t rpin) {
-}
-
-static bool
-cc2652_io_pin_is_valid (io_t *io,io_pin_t rpin) {
-	cc2652_io_pin_t pin = {rpin};
-	return cc2652_io_pin_number(pin) != CC2652_INVALID_PIN_NUMBER;
-}
-
-static void
-cc2652_set_io_pin_interrupt (io_t *io,io_pin_t rpin,io_interrupt_handler_t *h) {
-/*
-	switch (base3_gpio_pin_config_interrupt(pin)) {
-	  case GPIO_INTERRUPT_RISING:
-			IOCIOIntSet (
-				 base3_gpio_pin_config_number(pin),IOC_INT_ENABLE,IOC_RISING_EDGE
-			);
-	  break;
-	  case GPIO_INTERRUPT_FALLING:
-			IOCIOIntSet (
-				 base3_gpio_pin_config_number(pin),IOC_INT_ENABLE,IOC_FALLING_EDGE
-			);
-	  break;
-	  case GPIO_INTERRUPT_BOTH:
-			IOCIOIntSet (
-				 base3_gpio_pin_config_number(pin),IOC_INT_ENABLE,IOC_BOTH_EDGES
-			);
-	  break;
-	}
-*/
-}
-
-INLINE_FUNCTION uint32_t prbs_rotl(const uint32_t x, int k) {
-	return (x << k) | (x >> (32 - k));
-}
-
-static uint32_t
-cc2652_get_prbs_random_u32 (io_t *io) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	uint32_t *s = this->prbs_state;
-	const uint32_t result = prbs_rotl (s[0] + s[3], 7) + s[0];
-
-	const uint32_t t = s[1] << 9;
-
-	s[2] ^= s[0];
-	s[3] ^= s[1];
-	s[1] ^= s[2];
-	s[0] ^= s[3];
-
-	s[2] ^= t;
-
-	s[3] = prbs_rotl (s[3], 11);
-
-	return result;
-}
-
-static void
-cc2652_time_clock_enqueue_alarm (io_t *io,io_alarm_t *alarm) {
-	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-	
-	ENTER_CRITICAL_SECTION(io);
-
-	if (alarm->when.ns < this->alarms->when.ns) {
-		alarm->next_alarm = this->alarms;
-		this->alarms = alarm;
-		if (!set_time_clock_alarm_time (this)) {
-			io_panic (io,IO_PANIC_TIME_CLOCK_ERROR);
-		}
-	} else {
-		io_alarm_t *pre = this->alarms;
-		while (alarm->when.ns > pre->when.ns) {
-			if (pre->next_alarm == &s_null_io_alarm) {
-				break;
-			}
-			pre = pre->next_alarm;
-		}
-		alarm->next_alarm = pre->next_alarm;
-		pre->next_alarm = alarm;
-	}
-
-	EXIT_CRITICAL_SECTION(io);
-}
-
-static void
-cc2652_time_clock_dequeue_alarm (io_t *io,io_alarm_t *alarm) {
-	if (alarm->next_alarm != NULL) {
-		ENTER_CRITICAL_SECTION (io);
-		if (alarm == io->alarms) {
-			io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-			io->alarms = io->alarms->next_alarm;
-			set_time_clock_alarm_time (this);
-		} else {
-			io_alarm_t *pre = io->alarms;
-			while (pre) {
-				if (alarm == pre->next_alarm) {
-					pre->next_alarm = alarm->next_alarm;
-					break;
-				}
-				pre = pre->next_alarm;
-			}
-		}
-		alarm->next_alarm = NULL;
-		EXIT_CRITICAL_SECTION (io);
-	}
-}
-
-static void
-cc2652_panic (io_t *io,int code) {
+hard_fault (void *io) {
 	DISABLE_INTERRUPTS;
-	while (1);
-}
-
-static void
-cc2652_log (io_t *io,char const *fmt,va_list va) {
-	// ...
-}
-
-void
-add_io_implementation_cpu_methods (io_implementation_t *io_i) {
-	add_io_implementation_core_methods (io_i);
-
-	io_i->get_byte_memory = cc2652_io_get_byte_memory;
-	io_i->get_short_term_value_memory = cc2652_io_get_stvm;
-	io_i->do_gc = cc2652_do_gc;
-	io_i->is_first_run = cc2652_is_first_run;
-	io_i->uid = cc2652_get_uid;
-	io_i->do_gc = cc2652_do_gc;
-	io_i->get_next_prbs_u32 = cc2652_get_prbs_random_u32;
-	io_i->signal_task_pending = cc2652_signal_task_pending;
-	io_i->enqueue_task = cc2652_enqueue_task;
-	io_i->do_next_task = cc2652_do_next_task;
-	io_i->signal_event_pending = cc2652_signal_event_pending;
-	io_i->enter_critical_section = cc2652_enter_critical_section;
-	io_i->exit_critical_section = cc2652_exit_critical_section;
-	io_i->in_event_thread = cc2652_is_in_event_thread;
-	io_i->wait_for_event = cc2652_wait_for_event;
-	io_i->get_time = cc2652_get_time,
-	io_i->enqueue_alarm = cc2652_time_clock_enqueue_alarm;
-	io_i->dequeue_alarm = cc2652_time_clock_dequeue_alarm;
-	io_i->register_interrupt_handler = cc2652_register_interrupt_handler;
-	io_i->unregister_interrupt_handler = cc2652_unregister_interrupt_handler;
-	io_i->wait_for_all_events = cc2652_for_all_events;
-	io_i->set_io_pin_output = cc2652_set_io_pin_to_output,
-	io_i->set_io_pin_input = cc2652_set_io_pin_to_input,
-	io_i->set_io_pin_alternate = cc2652_set_io_pin_to_alternate,
-	io_i->set_io_pin_interrupt = cc2652_set_io_pin_interrupt,
-	io_i->read_from_io_pin = cc2652_read_io_input_pin,
-	io_i->write_to_io_pin = cc2652_write_to_io_pin,
-	io_i->toggle_io_pin = cc2652_toggle_io_pin,
-	io_i->valid_pin = cc2652_io_pin_is_valid,
-	io_i->release_io_pin = cc2652_release_io_pin,
-	io_i->panic = cc2652_panic;
-	io_i->log = cc2652_log;
+	while(1);
 }
 
 static void
@@ -1427,30 +269,86 @@ event_thread (void *io) {
 	this->in_event_thread = false;
 }
 
-static void
-hard_fault (void *io) {
-	DISABLE_INTERRUPTS;
-	while(1);
-}
-
 void
-initialise_cpu_io (io_t *io) {
+initialise_io_cpu (io_t *io) {
 	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
 
 	this->in_event_thread = false;
 	this->first_run = cc2652_io_config_is_first_run ();
-	
-	io_cpu_clock_start (io,io_get_core_clock(io));
 
-	register_io_interrupt_handler (io,INT_PENDSV,event_thread,io);
-	register_io_interrupt_handler (io,INT_HARD_FAULT,hard_fault,io);
-
-	start_time_clock (this);
-	
 	this->prbs_state[0] = io_get_random_u32(io);
 	this->prbs_state[1] = 0xf542d2d3;
 	this->prbs_state[2] = 0x6fa035c3;
 	this->prbs_state[3] = 0x77f2db5b;
+	register_io_interrupt_handler (io,INT_PENDSV,event_thread,io);
+	register_io_interrupt_handler (io,INT_HARD_FAULT,hard_fault,io);
+
+	start_time_clock (this);
+}
+
+void
+cc2652_do_gc (io_t *io,int32_t count) {
+    io_value_memory_do_gc (io_get_short_term_value_memory (io),count);
+}
+
+void
+cc2652_signal_event_pending (io_t *io) {
+    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
+}
+
+void
+cc2652_wait_for_event (io_t *io) {
+    __WFI();
+}
+
+void
+cc2652_wait_for_all_events (io_t *io) {
+	io_event_t *event;
+	io_alarm_t *alarm;
+	do {
+		ENTER_CRITICAL_SECTION(io);
+		event = io->events;
+		alarm = io->alarms;
+		EXIT_CRITICAL_SECTION(io);
+	} while (
+			event != &s_null_io_event
+		||	alarm != &s_null_io_alarm
+	);
+}
+
+io_uid_t const*
+cc2652_get_uid (io_t *io) {
+    return &io_config.uid;
+}
+
+bool
+cc2652_is_first_run (io_t *io) {
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	return this->first_run;
+}
+
+bool
+cc2652_enter_critical_section (io_t *io) {
+	uint32_t interrupts_are_enabled = !(__get_PRIMASK() & 0x1);
+	DISABLE_INTERRUPTS;
+	return interrupts_are_enabled;
+}
+
+void
+cc2652_exit_critical_section (io_t *io,bool were_enabled) {
+	if (were_enabled) {
+		ENABLE_INTERRUPTS;
+	}
+}
+
+bool
+cc2652_is_in_event_thread (io_t *io) {
+	return ((io_cc2652_cpu_t*) io)->in_event_thread;
+}
+
+void
+cc2652_log (io_t *io,char const *fmt,va_list va) {
+	// ...
 }
 
 static void
@@ -1466,223 +364,115 @@ initialise_ram_interrupt_vectors (void) {
 
 static void
 initialise_c_runtime (void) {
-	extern uint32_t ld_start_of_sdata_in_flash;
-	extern uint32_t ld_start_of_sdata_in_ram,ld_end_of_sdata_in_ram;
-	extern uint32_t ld_start_of_bss,ld_end_of_bss;
+    extern uint32_t ld_start_of_sdata_in_flash;
+    extern uint32_t ld_start_of_sdata_in_ram,ld_end_of_sdata_in_ram;
+    extern uint32_t ld_start_of_bss,ld_end_of_bss;
 
-	uint32_t *src = &ld_start_of_sdata_in_flash;
-	uint32_t *dest = &ld_start_of_sdata_in_ram;
+    uint32_t *src = &ld_start_of_sdata_in_flash;
+    uint32_t *dest = &ld_start_of_sdata_in_ram;
 
-	while(dest < &ld_end_of_sdata_in_ram) *dest++ = *src++;
-	dest = &ld_start_of_bss;
-	while(dest < &ld_end_of_bss) *dest++ = 0;
+    while(dest < &ld_end_of_sdata_in_ram) *dest++ = *src++;
+    dest = &ld_start_of_bss;
+    while(dest < &ld_end_of_bss) *dest++ = 0;
 
-	// fill stack/heap region of RAM with a pattern
-	extern uint32_t ld_end_of_static_ram_allocations;
-	uint32_t *end = (uint32_t*) __get_MSP();
-	dest = &ld_end_of_static_ram_allocations;
-	while (dest < end) {
-		*dest++ = 0xdeadc0de;
-	}
-	
-	initialise_ram_interrupt_vectors ();
-}
+    #if (__FPU_USED == 1)
+    /* enable FPU if available and used */
+    SCB->CPACR |= (
+         (3UL << 10*2)   /* set CP10 Full Access               */
+      |  (3UL << 11*2)   /* set CP11 Full Access               */
+    );
+    #endif
 
-static void
-tune_cpu (void) {
-	// see GPNVM, TCM is disabled?
-	
-	#if (__FPU_USED == 1)
-	/* enable FPU if available and used */
-	SCB->CPACR |= ((3UL << 10*2) |             /* set CP10 Full Access               */
-					  (3UL << 11*2)  );           /* set CP11 Full Access               */
-	#endif
+    initialise_ram_interrupt_vectors();
 }
 
 int main(void);
-
+extern const void* s_flash_vector_table[];
 void
 cc2652_core_reset (void) {
-	SetupTrimDevice();
-	initialise_c_runtime ();
-	tune_cpu ();
-	main ();
-	while (1);
+    initialise_c_runtime();
+
+    SetupTrimDevice();
+    if (OSCClockSourceGet(OSC_SRC_CLK_HF) != OSC_XOSC_HF) {
+        if (OSC_IsHPOSCEnabled()) {
+            OSCHF_TurnOnXosc();
+            OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
+            while (!OSCHfSourceReady());
+            OSCHfSourceSwitch();
+        }
+    }
+    SCB->VTOR = (uint32_t) s_flash_vector_table;
+
+    main();
+    while(1);
 }
 
-static void
+void
 handle_io_cpu_interrupt (void) {
-	io_interrupt_handler_t const *interrupt = &cpu_interrupts[
+	uint32_t index = (
 		SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk
-	];
+	);
+	io_interrupt_handler_t const *interrupt = &cpu_interrupts[index];
 	interrupt->action(interrupt->user_value);
 }
 
-extern uint32_t ld_top_of_c_stack;
-__attribute__ ((section(".isr_vector")))
+__attribute__ ((section(".isr_vectors")))
 const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
-	&ld_top_of_c_stack,
-	cc2652_core_reset,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
+    (void const*) 0x14000,
+    cc2652_core_reset,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
 
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
-	handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
+    handle_io_cpu_interrupt,
 };
 
 #endif /* IMPLEMENT_IO_CPU */
-#ifdef IMPLEMENT_VERIFY_IO_CPU
-TEST_BEGIN(test_io_random_1) {
-	uint32_t rand[3];
-
-	rand[0] = io_get_random_u32(TEST_IO);
-	rand[1] = io_get_random_u32(TEST_IO);
-	rand[2] = io_get_random_u32(TEST_IO);
-
-	if (rand[0] == rand[1])	rand[1] = io_get_random_u32(TEST_IO);
-	if (rand[0] == rand[1]) rand[1] = io_get_random_u32(TEST_IO);
-	if (rand[0] == rand[1]) rand[1] = io_get_random_u32(TEST_IO);
-
-	if (rand[1] == rand[2]) rand[2] = io_get_random_u32(TEST_IO);
-	if (rand[1] == rand[2]) rand[2] = io_get_random_u32(TEST_IO);
-	if (rand[1] == rand[2]) rand[2] = io_get_random_u32(TEST_IO);
-
-	VERIFY(rand[0] != rand[1],NULL);
-	VERIFY(rand[1] != rand[2],NULL);
-
-	rand[0] = io_get_next_prbs_u32(TEST_IO);
-	rand[1] = io_get_next_prbs_u32(TEST_IO);
-	rand[2] = io_get_next_prbs_u32(TEST_IO);
-
-	if (rand[0] == rand[1])	rand[1] = io_get_next_prbs_u32(TEST_IO);
-	if (rand[0] == rand[1]) rand[1] = io_get_next_prbs_u32(TEST_IO);
-	if (rand[0] == rand[1]) rand[1] = io_get_next_prbs_u32(TEST_IO);
-
-	if (rand[1] == rand[2]) rand[2] = io_get_next_prbs_u32(TEST_IO);
-	if (rand[1] == rand[2]) rand[2] = io_get_next_prbs_u32(TEST_IO);
-	if (rand[1] == rand[2]) rand[2] = io_get_next_prbs_u32(TEST_IO);
-
-	VERIFY(rand[0] != rand[1],NULL);
-	VERIFY(rand[1] != rand[2],NULL);
-
-
-}
-TEST_END
-
-static void
-test_io_events_1_ev (io_event_t *ev) {
-	*((uint32_t*) ev->user_value) = 1;
-}
-
-TEST_BEGIN(test_io_events_1) {
-	volatile uint32_t a = 0;
-	io_event_t ev;
-		
-	initialise_io_event (&ev,test_io_events_1_ev,(void*) &a);
-
-	io_enqueue_event (TEST_IO,&ev);
-	while (a == 0);
-	VERIFY (a == 1,NULL);
-}
-TEST_END
-
-TEST_BEGIN(test_time_clock_alarms_1) {
-	volatile uint32_t a = 0;
-	io_alarm_t alarm;
-	io_event_t ev;
-	io_time_t t;
-	initialise_io_event (&ev,test_io_events_1_ev,(void*) &a);
-	
-	t = io_get_time (TEST_IO);
-	initialise_io_alarm (
-		&alarm,&ev,&ev,
-		(io_time_t) {t.ns + millisecond_time(200).ns}
-	);
-
-	io_enqueue_alarm (TEST_IO,&alarm);
-	
-	while (a == 0);
-	VERIFY (a == 1,NULL);
-
-	VERIFY ((io_get_time (TEST_IO).ns - t.ns) >= millisecond_time(200).ns,NULL);
-	
-	
-}
-TEST_END
-
-UNIT_SETUP(setup_io_cpu_unit_test) {
-	return VERIFY_UNIT_CONTINUE;
-}
-
-UNIT_TEARDOWN(teardown_io_cpu_unit_test) {
-}
-
-void
-io_cpu_unit_test (V_unit_test_t *unit) {
-	static V_test_t const tests[] = {
-		test_io_random_1,
-		test_io_events_1,
-		test_time_clock_alarms_1,
-		0
-	};
-	unit->name = "io cpu";
-	unit->description = "io cpu unit test";
-	unit->tests = tests;
-	unit->setup = setup_io_cpu_unit_test;
-	unit->teardown = teardown_io_cpu_unit_test;
-}
-
-#define IO_CPU_UNIT_TESTS \
-	io_cpu_unit_test,\
-	/**/
-#else
-#define IO_CPU_UNIT_TESTS
-#endif /* IMPLEMENT_VERIFY_IO_CPU */
 #endif

@@ -59,14 +59,13 @@ extern "C"
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <ti/devices/DeviceFamily.h>
-#include DeviceFamily_constructPath(inc/hw_types.h)
-#include DeviceFamily_constructPath(inc/hw_memmap.h)
-#include DeviceFamily_constructPath(inc/hw_rfc_pwr.h)
-#include DeviceFamily_constructPath(inc/hw_rfc_dbell.h)
-#include DeviceFamily_constructPath(inc/hw_fcfg1.h)
-#include DeviceFamily_constructPath(inc/hw_adi_3_refsys.h)
-#include DeviceFamily_constructPath(inc/hw_adi.h)
+#include "../inc/hw_types.h"
+#include "../inc/hw_memmap.h"
+#include "../inc/hw_rfc_pwr.h"
+#include "../inc/hw_rfc_dbell.h"
+#include "../inc/hw_fcfg1.h"
+#include "../inc/hw_adi_3_refsys.h"
+#include "../inc/hw_adi.h"
 #include "rf_common_cmd.h"
 #include "rf_prop_cmd.h"
 #include "rf_ble_cmd.h"
@@ -412,7 +411,7 @@ extern uint32_t RFCAnaDivTxOverride(uint8_t loDivider, uint8_t frontEndMode);
 //
 //*****************************************************************************
 #if !defined(DRIVERLIB_NOROM) && !defined(DOXYGEN)
-    #include DeviceFamily_constructPath(driverlib/rom.h)
+    #include "../driverlib/rom.h"
     #ifdef ROM_RFCCpeIntGetAndClear
         #undef  RFCCpeIntGetAndClear
         #define RFCCpeIntGetAndClear            ROM_RFCCpeIntGetAndClear
