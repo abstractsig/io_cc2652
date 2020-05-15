@@ -120,12 +120,6 @@ peripheral_power_domain_implementation = {
     .turn_on = turn_peripheral_power_domain_on,
 };
 
-EVENT_DATA io_cpu_power_domain_implementation_t
-radio_power_domain_implementation = {
-    .turn_off = io_power_domain_no_operation,
-    .turn_on = io_power_domain_no_operation,
-};
-
 static void
 turn_serial_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
     controlled_power_domain_turn_on (pd);
@@ -161,6 +155,22 @@ io_cc2652_cpu_power_domain_t peripheral_power_domain = {
 io_cc2652_cpu_power_domain_t serial_power_domain = {
     .implementation = &serial_power_domain_implementation,
     .prcm_domain_identifier = PRCM_DOMAIN_SERIAL,
+};
+
+static void
+turn_radio_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
+    controlled_power_domain_turn_on (pd);
+}
+
+static EVENT_DATA io_cpu_power_domain_implementation_t
+radio_power_domain_implementation = {
+    .turn_off = io_power_domain_no_operation,
+    .turn_on = turn_radio_power_domain_on,
+};
+
+io_cc2652_cpu_power_domain_t radio_power_domain = {
+    .implementation = &radio_power_domain_implementation,
+    .prcm_domain_identifier = PRCM_DOMAIN_RFCORE,
 };
 
 //
@@ -374,13 +384,37 @@ cc2652_serial_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
     return def_io_cpu_power_domain_pointer (&serial_power_domain);
 }
 
-EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_serial_clock_implementation = {
+    .specialisation_of = &io_dependent_clock_implementation,
     .get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
     .get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
     .get_power_domain = cc2652_serial_clock_get_power_domain,
     .start = cc2652_peripheral_clock_start,
     .stop = NULL,
+};
+
+static io_cpu_power_domain_pointer_t
+cc2652_radio_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
+    return def_io_cpu_power_domain_pointer (&radio_power_domain);
+}
+
+static bool
+cc2652_radio_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
+    if (io_cpu_dependant_clock_start_input (io,clock)) {
+        turn_on_io_power_domain (io,io_cpu_clock_power_domain (clock));
+        return true;
+    } else {
+        return false;
+    }
+}
+
+EVENT_DATA io_cpu_clock_implementation_t cc2652_radio_clock_implementation = {
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(
+		&io_dependent_clock_implementation
+	)
+	.get_power_domain = cc2652_radio_clock_get_power_domain,
+	.start = cc2652_radio_clock_start,
 };
 
 static float64_t
@@ -401,12 +435,13 @@ cc2652_rtc_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
-    .get_current_frequency = cc2652_rtc_clock_get_current_frequency,
-    .get_expected_frequency = cc2652_rtc_clock_get_current_frequency,
-    .get_power_domain = get_always_on_io_power_domain,
-    .start = cc2652_rtc_clock_start,
-    .stop = NULL,
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(
+		&io_dependent_clock_implementation
+	)
+	.get_current_frequency = cc2652_rtc_clock_get_current_frequency,
+	.get_expected_frequency = cc2652_rtc_clock_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_rtc_clock_start,
 };
 
 

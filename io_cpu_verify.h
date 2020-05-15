@@ -24,6 +24,25 @@ TEST_BEGIN(test_io_events_1) {
 }
 TEST_END
 
+TEST_BEGIN(test_time_clock_alarms_1) {
+	volatile uint32_t a = 0;
+	io_alarm_t alarm;
+	io_event_t ev;
+	io_time_t t;
+	initialise_io_event (&ev,test_io_events_1_ev,(void*) &a);
+
+	t = io_get_time (TEST_IO);
+	initialise_io_alarm (
+		&alarm,&ev,&ev,
+		(io_time_t) {t.nanoseconds + millisecond_time(200).nanoseconds}
+	);
+
+	io_enqueue_alarm (TEST_IO,&alarm);
+
+	while (a == 0);
+	VERIFY (a == 1,NULL);
+}
+TEST_END
 
 UNIT_SETUP(setup_io_cpu_unit_test) {
 	return VERIFY_UNIT_CONTINUE;
@@ -36,6 +55,7 @@ void
 io_cpu_unit_test (V_unit_test_t *unit) {
 	static V_test_t const tests[] = {
 		test_io_events_1,
+		test_time_clock_alarms_1,
 		0
 	};
 	unit->name = "io cpu";

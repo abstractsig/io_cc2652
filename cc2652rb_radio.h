@@ -9,6 +9,7 @@
 typedef struct PACK_STRUCTURE cc2652rb_radio_socket {
 	IO_MULTIPLEX_SOCKET_STRUCT_MEMBERS
 
+	io_cpu_clock_pointer_t peripheral_clock;
 
 } cc2652rb_radio_socket_t;
 
@@ -39,6 +40,7 @@ cc2652rb_radio_power_off_open (
 ) {
 	switch (flag) {
 		case IO_SOCKET_OPEN_CONNECT:
+		break;
 
 		case IO_SOCKET_OPEN_LISTEN:
 			// not supported
@@ -46,6 +48,12 @@ cc2652rb_radio_power_off_open (
 		default:
 			return socket->State;
 	}
+
+	cc2652rb_radio_socket_t *this = (cc2652rb_radio_socket_t*) socket;
+	if (io_cpu_clock_start (this->io,this->peripheral_clock)) {
+	}
+
+	return socket->State;
 }
 
 static EVENT_DATA io_socket_state_t cc2652rb_radio_power_off = {
@@ -99,7 +107,7 @@ cc2652rb_radio_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	initialise_io_event (ev,cc2652rb_radio_open_event,socket);
 	io_enqueue_event (io_socket_io (socket),ev);
 
-	//rfcore requires the crystal oscillator to be M3 core clock
+	//rfcore requires the crystal oscillator to be core clock
 	if (
 		OSCClockSourceGet(OSC_SRC_CLK_HF) == OSC_XOSC_HF
 	) {
@@ -107,7 +115,7 @@ cc2652rb_radio_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	}
 
 	// door bell interrupt
-	HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFHWIFG) = 0;
+//	HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFHWIFG) = 0;
 
 	return true;
 }
