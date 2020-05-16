@@ -224,25 +224,22 @@ cc2652_hp_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
 }
 
 //
-// oscilator registers are accessed via this DDI thing
+// hp really means the HF clock sourced from the XOSC
+// but there seems no way to explicitly turn on the
+// external oscillator independently of the HF clock
 //
 static bool
 cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
-
-    return OSC_IsHPOSCEnabled();
-/*
-
-
-    if (!OSC_IsHPOSCEnabled()) {
-
-        OSC_HPOSCInitializeFrequencyOffsetParameters ();
-
-
-        return true;
-    }
-
-    return false;
-*/
+	if (OSC_IsHPOSCEnabled()) {
+		if (OSCClockSourceGet(OSC_SRC_CLK_HF) == OSC_XOSC_HF) {
+			return true;
+		} else {
+			OSCHF_TurnOnXosc();
+		}
+		return true;
+	} else {
+		return false;
+	}
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation = {

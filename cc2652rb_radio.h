@@ -21,6 +21,10 @@ extern EVENT_DATA io_socket_implementation_t cc2652rb_radio_socket_implementatio
 // Implementation
 //
 //-----------------------------------------------------------------------------
+#include <ti/drivers/rf/RFQueue.c>
+#include <ti/drivers/rf/RFCC26X2.c>
+
+
 /*
  *-----------------------------------------------------------------------------
  *-----------------------------------------------------------------------------

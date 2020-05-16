@@ -276,6 +276,8 @@ initialise_io_cpu (io_t *io) {
 	this->in_event_thread = false;
 	this->first_run = cc2652_io_config_is_first_run ();
 
+	io_cpu_clock_start (io,io_get_core_clock(io));
+
 	this->prbs_state[0] = io_get_random_u32(io);
 	this->prbs_state[1] = 0xf542d2d3;
 	this->prbs_state[2] = 0x6fa035c3;
@@ -391,18 +393,8 @@ extern const void* s_flash_vector_table[];
 void
 cc2652_core_reset (void) {
     initialise_c_runtime();
-
     SetupTrimDevice();
-    if (OSCClockSourceGet(OSC_SRC_CLK_HF) != OSC_XOSC_HF) {
-        if (OSC_IsHPOSCEnabled()) {
-            OSCHF_TurnOnXosc();
-            OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
-            while (!OSCHfSourceReady());
-            OSCHfSourceSwitch();
-        }
-    }
     SCB->VTOR = (uint32_t) s_flash_vector_table;
-
     main();
     while(1);
 }
