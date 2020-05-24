@@ -409,12 +409,25 @@ cc2652_core_reset (void) {
 	volatile uint32_t * pui32Cpacr = (uint32_t *) 0xE000ED88;
 	*pui32Cpacr |= (0xF << 20);
 	#endif
+
+	DISABLE_INTERRUPTS;
+
+	volatile uint32_t *vtor = (uint32_t *) 0xE000ED08;
+	*vtor = (uint32_t) s_flash_vector_table;
+
 	SetupTrimDevice();
 	initialise_c_runtime();
-	SCB->VTOR = (uint32_t) s_flash_vector_table;
+
+
+	ENABLE_INTERRUPTS;
+
 	main();
 	while(1);
 }
+
+void resetISR(void);
+
+
 
 void
 handle_io_cpu_interrupt (void) {
@@ -425,10 +438,11 @@ handle_io_cpu_interrupt (void) {
 	interrupt->action(interrupt->user_value);
 }
 
+extern uint32_t ld_top_of_c_stack;
 __attribute__ ((section(".isr_vectors")))
 const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
-    (void const*) 0x14000,
-    cc2652_core_reset,
+    (void const*) &ld_top_of_c_stack,
+	 resetISR,
     handle_io_cpu_interrupt,
     handle_io_cpu_interrupt,
     handle_io_cpu_interrupt,
@@ -482,6 +496,18 @@ const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
     handle_io_cpu_interrupt,
     handle_io_cpu_interrupt,
 };
+
+
+void __attribute__((naked)) resetISR(void)
+{
+    __asm__ __volatile__ (
+        " movw r0, #:lower16:s_flash_vector_table\n"
+        " movt r0, #:upper16:s_flash_vector_table\n"
+        " ldr r0, [r0]\n"
+        " mov sp, r0\n"
+        " bl cc2652_core_reset"
+    );
+}
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif

@@ -591,7 +591,7 @@ cc2652rb_radio_receive_frame_receive (io_socket_t *socket) {
 		"%-*s%-*slength = %u\n",
 		DBP_FIELD1,"radio",
 		DBP_FIELD2,"rx",
-		count
+		frame.length
 	);
 	#endif
 	count ++;
