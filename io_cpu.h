@@ -4,6 +4,8 @@
 #ifndef io_cpu_H_
 #define io_cpu_H_
 #include <io_core.h>
+#define __RFC_STRUCT PACK_STRUCTURE
+#define __RFC_STRUCT_ATTR
 #include <cc2652rb.h>
 
 void cc2652_do_gc (io_t*,int32_t);
@@ -31,6 +33,7 @@ void cc2652_time_clock_enqueue_alarm (io_t*,io_alarm_t*);
 void cc2652_time_clock_dequeue_alarm (io_t*,io_alarm_t*);
 bool cc2652_clear_first_run (void);
 bool cc2652_is_first_run (io_t*);
+void cc2652_flush_log (io_t*);
 
 #define SPECIALISE_IO_CPU_IMPLEMENTATION(S) \
 	SPECIALISE_IO_IMPLEMENTATION(S) \
@@ -59,6 +62,7 @@ bool cc2652_is_first_run (io_t*);
 	.register_interrupt_handler = cc2652_register_interrupt_handler,\
 	.unregister_interrupt_handler = cc2652_unregister_interrupt_handler,\
 	.log = cc2652_log,\
+	.flush_log = cc2652_flush_log,\
    /**/
 
 typedef struct PACK_STRUCTURE cc2652_time_clock {
@@ -85,6 +89,7 @@ void	initialise_io_cpu (io_t*);
 void	cc2652_start_gpio_clock (io_t*);
 void	start_time_clock (io_cc2652_cpu_t*);
 
+#include <cc2652rb_clocks.h>
 #include <cc2652rb_pins.h>
 #include <cc2652rb_uart.h>
 #include <cc2652rb_radio.h>
@@ -95,7 +100,6 @@ void	start_time_clock (io_cc2652_cpu_t*);
 // implementation
 //
 //-----------------------------------------------------------------------------
-#include <cc2652rb_clocks.h>
 #include <cc2652rb_time.h>
 /*
  *-----------------------------------------------------------------------------
@@ -350,7 +354,24 @@ cc2652_is_in_event_thread (io_t *io) {
 
 void
 cc2652_log (io_t *io,char const *fmt,va_list va) {
-	// ...
+	io_socket_t *print = io_get_socket (io,IO_PRINTF_SOCKET);
+	if (print) {
+		io_encoding_t *msg = io_socket_new_message (print);
+		if (msg) {
+			io_encoding_print (msg,fmt,va);
+			io_socket_send_message (print,msg);
+		} else {
+			io_panic (io,IO_PANIC_OUT_OF_MEMORY);
+		}
+	}
+}
+
+void
+cc2652_flush_log (io_t *io) {
+	io_socket_t *print = io_get_socket (io,IO_PRINTF_SOCKET);
+	if (print) {
+		io_socket_flush (print);
+	}
 }
 
 static void
@@ -377,14 +398,6 @@ initialise_c_runtime (void) {
     dest = &ld_start_of_bss;
     while(dest < &ld_end_of_bss) *dest++ = 0;
 
-    #if (__FPU_USED == 1)
-    /* enable FPU if available and used */
-    SCB->CPACR |= (
-         (3UL << 10*2)   /* set CP10 Full Access               */
-      |  (3UL << 11*2)   /* set CP11 Full Access               */
-    );
-    #endif
-
     initialise_ram_interrupt_vectors();
 }
 
@@ -392,11 +405,15 @@ int main(void);
 extern const void* s_flash_vector_table[];
 void
 cc2652_core_reset (void) {
-    initialise_c_runtime();
-    SetupTrimDevice();
-    SCB->VTOR = (uint32_t) s_flash_vector_table;
-    main();
-    while(1);
+	#if defined (__ARM_ARCH_7EM__) && defined(__VFP_FP__) && !defined(__SOFTFP__)
+	volatile uint32_t * pui32Cpacr = (uint32_t *) 0xE000ED88;
+	*pui32Cpacr |= (0xF << 20);
+	#endif
+	SetupTrimDevice();
+	initialise_c_runtime();
+	SCB->VTOR = (uint32_t) s_flash_vector_table;
+	main();
+	while(1);
 }
 
 void

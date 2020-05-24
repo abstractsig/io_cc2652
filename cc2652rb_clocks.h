@@ -1,13 +1,13 @@
 /*
  *
- *
+ * power domains and clocks for the CC2652
  *
  */
 #ifndef cc2652rb_clocks_H_
 #define cc2652rb_clocks_H_
 
 //
-// power domain
+// power domains
 //
 
 typedef struct PACK_STRUCTURE io_cc2652_cpu_power_domain {
@@ -15,70 +15,85 @@ typedef struct PACK_STRUCTURE io_cc2652_cpu_power_domain {
     uint32_t prcm_domain_identifier;
 } io_cc2652_cpu_power_domain_t;
 
+extern EVENT_DATA io_cc2652_cpu_power_domain_t cpu_core_power_domain;
 extern io_cc2652_cpu_power_domain_t peripheral_power_domain;
-
-//
-// inline io power domain implementation
-//
-INLINE_FUNCTION void
-turn_on_io_power_domain (io_t* io,io_cpu_power_domain_pointer_t pd) {
-    return io_cpu_power_domain_ro_pointer(pd)->implementation->turn_on(io,pd);
-}
-
-INLINE_FUNCTION void
-turn_off_io_power_domain (io_t* io,io_cpu_power_domain_pointer_t pd) {
-    return io_cpu_power_domain_ro_pointer(pd)->implementation->turn_off(io,pd);
-}
+extern io_cc2652_cpu_power_domain_t serial_power_domain;
+extern io_cc2652_cpu_power_domain_t radio_power_domain;
 
 //
 // clocks
 //
+
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_radio_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation;
+
+
 typedef struct PACK_STRUCTURE cc2652_hf_rc_oscillator {
     IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
 } cc2652_hf_rc_oscillator_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_implementation;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
+
+
+typedef struct PACK_STRUCTURE cc2652_hp_oscillator {
+    IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
+    float64_t frequency;
+} cc2652_hp_oscillator_t;
+
+typedef struct PACK_STRUCTURE cc2652_sclk_lf {
+    IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
+} cc2652_sclk_lf_t;
+
+typedef struct cc2652_core_clock {
+    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
+} cc2652_core_clock_t;
+
+typedef struct cc2652_rtc_clock {
+    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
+} cc2652_rtc_clock_t;
+
+typedef struct cc2652_peripheral_clock {
+    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
+    uint32_t prcm_peripheral_id;
+} cc2652_peripheral_clock_t;
+
+INLINE_FUNCTION bool
+cc2652_clock_is_hp_oscillator (io_cpu_clock_pointer_t clock) {
+    return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
+}
 
 INLINE_FUNCTION bool
 cpu_clock_is_cc2652_hf_rc_oscillator (io_cpu_clock_pointer_t clock) {
     return io_cpu_clock_has_implementation (clock,&cc2652_hf_rc_48_oscillator_implementation);
 }
 
-typedef struct PACK_STRUCTURE cc2652_hp_oscillator {
-    IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
-    float64_t frequency;
-} cc2652_hp_oscillator_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
-
 INLINE_FUNCTION bool
 cpu_clock_is_cc2652_hp_oscillator (io_cpu_clock_pointer_t clock) {
     return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
 }
 
-typedef struct PACK_STRUCTURE cc2652_sclk_lf {
-    IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
-} cc2652_sclk_lf_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation;
+INLINE_FUNCTION bool
+cpu_clock_is_derrived_from_hp_oscillator (io_cpu_clock_pointer_t clock) {
+    return io_cpu_clock_is_derrived_from (clock,&cc2652_hp_oscillator_implementation);
+}
 
-typedef struct cc2652_core_clock {
-    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
-} cc2652_core_clock_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
+#ifdef IMPLEMENT_IO_CPU
+//-----------------------------------------------------------------------------
+//
+// implementation
+//
+//-----------------------------------------------------------------------------
+//
+// power domains
+//
 
-typedef struct cc2652_rtc_clock {
-    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
-} cc2652_rtc_clock_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation;
-
-typedef struct cc2652_peripheral_clock {
-    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
-    uint32_t prcm_peripheral_id;
-} cc2652_peripheral_clock_t;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation;
-
-
-bool
+static bool
 controlled_power_domain_turn_on (io_cpu_power_domain_pointer_t pd) {
     io_cc2652_cpu_power_domain_t const *this = (io_cc2652_cpu_power_domain_t const *) (
         io_cpu_power_domain_ro_pointer (pd)
@@ -103,10 +118,9 @@ cpu_core_power_domain_implementation = {
     .turn_on = io_power_domain_no_operation,
 };
 
-EVENT_DATA io_cpu_power_domain_implementation_t
-bus_power_domain_implementation = {
-    .turn_off = io_power_domain_no_operation,
-    .turn_on = io_power_domain_no_operation,
+EVENT_DATA io_cc2652_cpu_power_domain_t cpu_core_power_domain = {
+    .implementation = &cpu_core_power_domain_implementation,
+    .prcm_domain_identifier = PRCM_DOMAIN_MCU, //
 };
 
 static void
@@ -120,6 +134,11 @@ peripheral_power_domain_implementation = {
     .turn_on = turn_peripheral_power_domain_on,
 };
 
+io_cc2652_cpu_power_domain_t peripheral_power_domain = {
+    .implementation = &peripheral_power_domain_implementation,
+    .prcm_domain_identifier = PRCM_DOMAIN_PERIPH,
+};
+
 static void
 turn_serial_power_domain_on (io_t *io,io_cpu_power_domain_pointer_t pd) {
     controlled_power_domain_turn_on (pd);
@@ -129,27 +148,6 @@ static EVENT_DATA io_cpu_power_domain_implementation_t
 serial_power_domain_implementation = {
     .turn_off = io_power_domain_no_operation,
     .turn_on = turn_serial_power_domain_on,
-};
-
-EVENT_DATA io_cpu_power_domain_implementation_t
-vims_power_domain_implementation = {
-    .turn_off = io_power_domain_no_operation,
-    .turn_on = io_power_domain_no_operation,
-};
-
-EVENT_DATA io_cc2652_cpu_power_domain_t always_on_power_domain = {
-    .implementation = &cpu_core_power_domain_implementation,
-    .prcm_domain_identifier = 0, // none
-};
-
-EVENT_DATA io_cc2652_cpu_power_domain_t cpu_core_power_domain = {
-    .implementation = &cpu_core_power_domain_implementation,
-    .prcm_domain_identifier = PRCM_DOMAIN_MCU, //
-};
-
-io_cc2652_cpu_power_domain_t peripheral_power_domain = {
-    .implementation = &peripheral_power_domain_implementation,
-    .prcm_domain_identifier = PRCM_DOMAIN_PERIPH,
 };
 
 io_cc2652_cpu_power_domain_t serial_power_domain = {
@@ -171,6 +169,22 @@ radio_power_domain_implementation = {
 io_cc2652_cpu_power_domain_t radio_power_domain = {
     .implementation = &radio_power_domain_implementation,
     .prcm_domain_identifier = PRCM_DOMAIN_RFCORE,
+};
+
+//
+// work in progress
+//
+
+EVENT_DATA io_cpu_power_domain_implementation_t
+bus_power_domain_implementation = {
+    .turn_off = io_power_domain_no_operation,
+    .turn_on = io_power_domain_no_operation,
+};
+
+EVENT_DATA io_cpu_power_domain_implementation_t
+vims_power_domain_implementation = {
+    .turn_off = io_power_domain_no_operation,
+    .turn_on = io_power_domain_no_operation,
 };
 
 //
@@ -207,12 +221,11 @@ cc2652_hf_rc_24_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
 
 EVENT_DATA io_cpu_clock_implementation_t
 cc2652_hf_rc_24_oscillator_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
-    .get_current_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
-    .get_expected_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
-    .get_power_domain = get_always_on_io_power_domain,
-    .start = cc2652_hf_rc_oscillator_start,
-    .stop = NULL,
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+	.get_current_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
+	.get_expected_frequency = cc2652_hf_rc_24_oscillator_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_hf_rc_oscillator_start,
 };
 
 static float64_t
@@ -234,6 +247,7 @@ cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
 		if (OSCClockSourceGet(OSC_SRC_CLK_HF) == OSC_XOSC_HF) {
 			return true;
 		} else {
+			OSC_HPOSCInitializeFrequencyOffsetParameters();
 			OSCHF_TurnOnXosc();
 		}
 		return true;
@@ -243,18 +257,12 @@ cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
-    .get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
-    .get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
-    .get_power_domain = get_always_on_io_power_domain,
-    .start = cc2652_hp_oscillator_start,
-    .stop = NULL,
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+	.get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
+	.get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_hp_oscillator_start,
 };
-
-bool
-cc2652_clock_is_hp_oscillator (io_cpu_clock_pointer_t clock) {
-    return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
-}
 
 static float64_t
 cc2652_sclk_lf_get_current_frequency (io_cpu_clock_pointer_t this) {
@@ -271,13 +279,8 @@ cc2652_sclk_lf_start (io_t *io,io_cpu_clock_pointer_t clock) {
             io_cpu_clock_ro_pointer (clock)
         );
 
-        // need to use DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL to select
-        // connect input clock configuration
-
         if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
             OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_RCOSC_HF);
-//          HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) &= ~DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL_M;
-//          HWREG (AUX_DDI0_OSC_BASE + DDI_0_OSC_O_CTL0) |= DDI_0_OSC_CTL0_SCLK_LF_SRC_SEL_RCOSCHFDLF;
         } else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
             OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_XOSC_HF);
         } else {
@@ -291,12 +294,10 @@ cc2652_sclk_lf_start (io_t *io,io_cpu_clock_pointer_t clock) {
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
-    .get_current_frequency = cc2652_sclk_lf_get_current_frequency,
-    .get_expected_frequency = cc2652_sclk_lf_get_current_frequency,
-    .get_power_domain = get_always_on_io_power_domain,
-    .start = cc2652_sclk_lf_start,
-    .stop = NULL,
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+	.get_current_frequency = cc2652_sclk_lf_get_current_frequency,
+	.get_expected_frequency = cc2652_sclk_lf_get_current_frequency,
+	.start = cc2652_sclk_lf_start,
 };
 
 static float64_t
@@ -336,12 +337,11 @@ cc2652_core_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
-    .get_current_frequency = cc2652_core_clock_get_current_frequency,
-    .get_expected_frequency = cc2652_core_clock_get_current_frequency,
-    .get_power_domain = cc2652_core_clock_get_power_domain,
-    .start = cc2652_core_clock_start,
-    .stop = NULL,
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+	.get_current_frequency = cc2652_core_clock_get_current_frequency,
+	.get_expected_frequency = cc2652_core_clock_get_current_frequency,
+	.get_power_domain = cc2652_core_clock_get_power_domain,
+	.start = cc2652_core_clock_start,
 };
 
 static bool
@@ -368,12 +368,11 @@ cc2652_peripheral_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation = {
-    .specialisation_of = &io_cpu_clock_implementation,
-    .get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
-    .get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
-    .get_power_domain = cc2652_peripheral_clock_get_power_domain,
-    .start = cc2652_peripheral_clock_start,
-    .stop = NULL,
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(
+		&io_dependent_clock_implementation
+	)
+	.get_power_domain = cc2652_peripheral_clock_get_power_domain,
+	.start = cc2652_peripheral_clock_start,
 };
 
 static io_cpu_power_domain_pointer_t
@@ -383,12 +382,11 @@ cc2652_serial_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
 
 EVENT_DATA io_cpu_clock_implementation_t
 cc2652_serial_clock_implementation = {
-    .specialisation_of = &io_dependent_clock_implementation,
-    .get_current_frequency = io_dependant_cpu_clock_get_current_frequency,
-    .get_expected_frequency = io_dependant_cpu_clock_get_current_frequency,
-    .get_power_domain = cc2652_serial_clock_get_power_domain,
-    .start = cc2652_peripheral_clock_start,
-    .stop = NULL,
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(
+		&io_dependent_clock_implementation
+	)
+	.get_power_domain = cc2652_serial_clock_get_power_domain,
+	.start = cc2652_peripheral_clock_start,
 };
 
 static io_cpu_power_domain_pointer_t
@@ -400,6 +398,8 @@ static bool
 cc2652_radio_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
     if (io_cpu_dependant_clock_start_input (io,clock)) {
         turn_on_io_power_domain (io,io_cpu_clock_power_domain (clock));
+        // Turn on the clock to the RF core. Registers can be accessed afterwards.
+        RFCClockEnable();
         return true;
     } else {
         return false;
@@ -414,14 +414,6 @@ EVENT_DATA io_cpu_clock_implementation_t cc2652_radio_clock_implementation = {
 	.start = cc2652_radio_clock_start,
 };
 
-static float64_t
-cc2652_rtc_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
-    cc2652_rtc_clock_t const *this = (cc2652_rtc_clock_t const*) (
-        io_cpu_clock_ro_pointer (clock)
-    );
-    return io_cpu_clock_get_current_frequency (this->input);
-}
-
 static bool
 cc2652_rtc_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
     if (io_cpu_dependant_clock_start_input (io,clock)) {
@@ -429,6 +421,14 @@ cc2652_rtc_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
     } else {
         return false;
     }
+}
+
+static float64_t
+cc2652_rtc_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
+    cc2652_rtc_clock_t const *this = (cc2652_rtc_clock_t const*) (
+        io_cpu_clock_ro_pointer (clock)
+    );
+    return io_cpu_clock_get_current_frequency (this->input);
 }
 
 EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
@@ -440,6 +440,5 @@ EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
 	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_rtc_clock_start,
 };
-
-
+#endif /* IMPLEMENT_IO_CPU */
 #endif

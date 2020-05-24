@@ -219,20 +219,20 @@ cc2652_uart_new_message (io_socket_t *socket) {
 
 static bool
 cc2652_uart_send_message (io_socket_t *socket,io_encoding_t *encoding) {
+	bool ok = false;
+
 	if (is_io_binary_encoding (encoding)) {
 		cc2652_uart_t *this = (cc2652_uart_t*) socket;
 		if (io_encoding_pipe_put_encoding (this->tx_pipe,encoding)) {
 			if (io_encoding_pipe_count_occupied_slots (this->tx_pipe) == 1) {
 				cc2652_uart_output_next_buffer (this);
 			}
-			return true;
-		} else {
-			unreference_io_encoding (encoding);
-			return false;
+			ok = true;
 		}
-	} else {
-		return false;
 	}
+
+	unreference_io_encoding (encoding);
+	return ok;
 }
 
 void
