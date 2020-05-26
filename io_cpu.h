@@ -31,8 +31,8 @@ bool	cc2652_unregister_interrupt_handler (io_t*,int32_t,io_interrupt_action_t);
 void cc2652_log (io_t*,char const*,va_list);
 void cc2652_time_clock_enqueue_alarm (io_t*,io_alarm_t*);
 void cc2652_time_clock_dequeue_alarm (io_t*,io_alarm_t*);
-bool cc2652_clear_first_run (void);
 bool cc2652_is_first_run (io_t*);
+bool cc2652_clear_first_run (io_t*);
 void cc2652_flush_log (io_t*);
 
 #define SPECIALISE_IO_CPU_IMPLEMENTATION(S) \
@@ -41,6 +41,7 @@ void cc2652_flush_log (io_t*);
 	.signal_event_pending = cc2652_signal_event_pending,\
 	.uid = cc2652_get_uid,\
 	.is_first_run = cc2652_is_first_run,\
+	.clear_first_run = cc2652_clear_first_run,\
 	.wait_for_event = cc2652_wait_for_event,\
 	.wait_for_all_events = cc2652_wait_for_all_events,\
 	.enqueue_alarm = cc2652_time_clock_enqueue_alarm,\
@@ -72,14 +73,15 @@ typedef struct PACK_STRUCTURE cc2652_time_clock {
 } cc2652_time_clock_t;
 
 #define CC2652_IO_CPU_STRUCT_MEMBERS \
-    IO_STRUCT_MEMBERS               \
-    uint32_t in_event_thread;\
-    io_value_pipe_t *tasks;\
-    io_cpu_clock_pointer_t gpio_clock; \
-    uint32_t prbs_state[4]; \
-    cc2652_time_clock_t rtc;\
-    uint32_t first_run;\
-    /**/
+	IO_STRUCT_MEMBERS               \
+	uint32_t in_event_thread;\
+	io_value_pipe_t *tasks;\
+	io_cpu_clock_pointer_t gpio_clock; \
+	uint32_t prbs_state[4]; \
+	cc2652_time_clock_t rtc;\
+	uint32_t first_run;\
+	io_dma_channel_t *dma_channel_list;\
+	/**/
 
 typedef struct PACK_STRUCTURE io_cc2652_cpu {
     CC2652_IO_CPU_STRUCT_MEMBERS
@@ -101,28 +103,6 @@ void	start_time_clock (io_cc2652_cpu_t*);
 //
 //-----------------------------------------------------------------------------
 #include <cc2652rb_time.h>
-/*
- *-----------------------------------------------------------------------------
- *
- * CPU Clock Tree
- *
- * On reset
- *
- *    +----------+                               +---------+
- *    | HF_RC_48 |-+---------------------------->| CPU     |        // 48MHz
- *    +----------+ |                             +---------+
- *                 |
- *                 |    +-------------+          +---------+
- *                 +--->| SKLK_LF     |--------->| RTC     |        //
- *                 |    +-------------+          +---------+
- *                 |
- *                 |    +-------------+          +---------+
- *                 +--->| PERDMACLK/1 |--------->| UART0   |        //
- *                 |    +-------------+          +---------+
- *
- *
- *-----------------------------------------------------------------------------
- */
 
 void
 cc2652_start_gpio_clock (io_t *io) {
@@ -193,7 +173,7 @@ restoreFlashCache(uint8_t mode) {
 }
 
 bool
-cc2652_clear_first_run (void) {
+cc2652_clear_first_run (io_t *io) {
     if (io_config.first_run_flag == IO_FIRST_RUN_SET) {
         io_persistant_state_t new_ioc = io_config;
         uint8_t mode = disableFlashCache ();
@@ -223,9 +203,9 @@ cc2652_clear_first_run (void) {
 }
 
 static bool
-cc2652_io_config_is_first_run (void) {
+cc2652_io_config_read_first_run (void) {
     bool first = (io_config.first_run_flag == IO_FIRST_RUN_SET);
-    cc2652_clear_first_run ();
+//    cc2652_clear_first_run ();
     return first;
 }
 
@@ -278,7 +258,8 @@ initialise_io_cpu (io_t *io) {
 	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
 
 	this->in_event_thread = false;
-	this->first_run = cc2652_io_config_is_first_run ();
+	this->first_run = cc2652_io_config_read_first_run ();
+	this->dma_channel_list = &null_dma_channel;
 
 	io_cpu_clock_start (io,io_get_core_clock(io));
 
@@ -406,13 +387,13 @@ extern const void* s_flash_vector_table[];
 void
 cc2652_core_reset (void) {
 	#if defined (__ARM_ARCH_7EM__) && defined(__VFP_FP__) && !defined(__SOFTFP__)
-	volatile uint32_t * pui32Cpacr = (uint32_t *) 0xE000ED88;
+	volatile uint32_t * pui32Cpacr = (uint32_t *) (CPU_SCS_BASE + CPU_SCS_O_CPACR); 
 	*pui32Cpacr |= (0xF << 20);
 	#endif
 
 	DISABLE_INTERRUPTS;
 
-	volatile uint32_t *vtor = (uint32_t *) 0xE000ED08;
+	volatile uint32_t *vtor = (uint32_t *) (CPU_SCS_BASE + CPU_SCS_O_VTOR); // 
 	*vtor = (uint32_t) s_flash_vector_table;
 
 	SetupTrimDevice();
@@ -425,10 +406,6 @@ cc2652_core_reset (void) {
 	while(1);
 }
 
-void resetISR(void);
-
-
-
 void
 handle_io_cpu_interrupt (void) {
 	uint32_t index = (
@@ -438,6 +415,7 @@ handle_io_cpu_interrupt (void) {
 	interrupt->action(interrupt->user_value);
 }
 
+void resetISR(void);
 extern uint32_t ld_top_of_c_stack;
 __attribute__ ((section(".isr_vectors")))
 const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
@@ -497,7 +475,10 @@ const void* s_flash_vector_table[NUMBER_OF_INTERRUPT_VECTORS] = {
     handle_io_cpu_interrupt,
 };
 
-
+//
+// we arrive here from Ti's ROM code so the standard cortex
+// reset conditions do nt apply unfortunately
+//
 void __attribute__((naked)) resetISR(void)
 {
     __asm__ __volatile__ (

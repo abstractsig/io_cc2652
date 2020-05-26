@@ -5,12 +5,15 @@
  */
 #ifndef cc2652rb_uart_H_
 #define cc2652rb_uart_H_
+#include <cc2652rb_udma.h>
 
 typedef struct PACK_STRUCTURE cc2652_uart {
 	IO_SOCKET_STRUCT_MEMBERS
 
 	io_encoding_implementation_t const *encoding;
 	io_cpu_clock_pointer_t peripheral_clock;
+
+	cc2652_io_dma_channel_t tx_dma_channel;
 
 	io_encoding_pipe_t *tx_pipe;
 	io_event_t transmit_complete;
@@ -27,14 +30,15 @@ typedef struct PACK_STRUCTURE cc2652_uart {
 
 } cc2652_uart_t;
 
-
-
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
 //
 // Implementation
 //
 //-----------------------------------------------------------------------------
+
+// interrupts must be disabled to use DMA
+#define USE_UART_DMA
 
 bool
 UARTisEnabled (uint32_t ui32Base) {
@@ -51,11 +55,19 @@ cc2652_uart_output_next_buffer (cc2652_uart_t *this) {
 		const uint8_t *byte,*end;
 		io_encoding_get_content (next,&byte,&end);
 
+#ifdef USE_UART_DMA
+		io_dma_transfer_to_peripheral (
+			(io_dma_channel_t*) &this->tx_dma_channel,byte,end - byte
+		);
+		HWREG (this->register_base_address + UART_O_DMACTL) |= (
+			UART_DMACTL_TXDMAE
+		);
+#else
 		while (byte < end) {
 			UARTCharPut (this->register_base_address,*byte++);
 		}
-
 		io_enqueue_event (this->io,&this->transmit_complete);
+#endif
 		return true;
 	} else {
 		return false;
@@ -73,9 +85,9 @@ cc2652_uart_output_event_handler (io_event_t *ev) {
 	if (
 			!cc2652_uart_output_next_buffer (this)
 		&&	UARTisEnabled (this->register_base_address)
-//		&& io_event_is_valid (io_pipe_event (this->tx_pipe))
+//		&& this->receieve_event)
 	) {
-//		io_enqueue_event (this->io,io_pipe_event (this->tx_pipe));
+//		io_enqueue_event (this->io,this->receieve_event);
 	}
 }
 
@@ -83,36 +95,40 @@ static void
 cc2652_uart_interrupt (void *user_value) {
 	cc2652_uart_t *this = user_value;
 	uint32_t status = HWREG(this->register_base_address + UART_O_MIS);
-
-	if (status & ( UART_MIS_RTMIS | UART_MIS_RXMIS)) {
-		// clear interrupt
-		HWREG (this->register_base_address + UART_O_ICR) &= ~UART_ICR_RXIC;
-
-		while (!(HWREG(this->register_base_address + UART_O_FR) & UART_FR_RXFE)) {
-			uint8_t byte = HWREG (this->register_base_address + UART_O_DR);
-			io_byte_pipe_put_byte (this->rx_pipe,byte);
+	if (status == 0 ) {
+		volatile uint32_t status = HWREG (UDMA0_BASE + UDMA_O_REQDONE);
+		volatile uint32_t mask = (1 << cc2652_io_dma_channel_number(&this->tx_dma_channel));
+		if (status & mask) {
+			HWREG (this->register_base_address + UART_O_DMACTL) &= ~(
+				UART_DMACTL_TXDMAE
+			);
+			uDMAIntClear(UDMA0_BASE,mask);
+			io_dma_transfer_complete (io_socket_io(this),(io_dma_channel_t*)&this->tx_dma_channel);
+		} else {
+			io_panic (io_socket_io(this),IO_PANIC_SOMETHING_BAD_HAPPENED);
 		}
-		//io_enqueue_event (this->io,io_pipe_event (this->rx_pipe));
-	}
 
-	if (status & UART_MIS_TXMIS) {
-		// clear interrupt
-		HWREG (this->register_base_address + UART_O_ICR) &= ~UART_ICR_TXIC;
-/*
-		while (!(HWREG(base + UART_O_FR) & UART_FR_TXFF)) {
-			if (!pipe_get_element (this->tx_buffer,byte)) {
-				// tx done, disable tx interrupt
-				HWREG (base + UART_O_IMSC) &= ~UART_IMSC_TXIM;
-				ccm3_uart_tx_is_busy (this) = 0;
-				break;
+	} else {
+		if (status & ( UART_MIS_RTMIS | UART_MIS_RXMIS)) {
+			// clear interrupt
+			HWREG (this->register_base_address + UART_O_ICR) &= ~UART_ICR_RXIC;
+
+			while (!(HWREG(this->register_base_address + UART_O_FR) & UART_FR_RXFE)) {
+				uint8_t byte = HWREG (this->register_base_address + UART_O_DR);
+				io_byte_pipe_put_byte (this->rx_pipe,byte);
 			}
+			//io_enqueue_event (this->io,this->receieve_event);
 		}
-*/
-	}
 
-	if (HWREG(this->register_base_address + UART_O_MIS) != 0) {
-		//panic("uart error");
+		if (status & UART_MIS_TXMIS) {
+			// clear interrupt
+			HWREG (this->register_base_address + UART_O_ICR) &= ~UART_ICR_TXIC;
+		}
 	}
+}
+
+static void
+cc2652_uart_tx_dma_error (io_event_t *ev) {
 
 }
 
@@ -123,7 +139,6 @@ cc2652_uart_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	this->io = io;
 
 	this->tx_pipe = mk_io_encoding_pipe (io_get_byte_memory(io),C->transmit_pipe_length);
-	//initialise_io_event (&this->signal_transmit_available,NULL,this);
 
 	this->rx_pipe = mk_io_byte_pipe (
 		io_get_byte_memory(io),io_settings_receive_pipe_length(C)
@@ -133,7 +148,14 @@ cc2652_uart_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 		&this->transmit_complete,cc2652_uart_output_event_handler,this
 	);
 
-	// enable interrupts
+	initialise_io_event (
+		&this->tx_dma_channel.complete,cc2652_uart_output_event_handler,this
+	);
+	initialise_io_event (
+		&this->tx_dma_channel.error,cc2652_uart_tx_dma_error,this
+	);
+
+	cc2652_register_dma_channel (io,(io_dma_channel_t*)&this->tx_dma_channel);
 
 	register_io_interrupt_handler (
 		io,this->interrupt_number,cc2652_uart_interrupt,this
@@ -187,8 +209,6 @@ cc2652_uart_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 					UART_IMSC_RXIM
 			//	|	UART_IMSC_TXIM
 			);
-
-			// see UART_O_DMACTL
 
 			UARTEnable (this->register_base_address);
 

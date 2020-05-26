@@ -71,6 +71,8 @@ typedef int32_t IRQn_Type;
 #include <ti/driverlib/uart.c>
 #include <ti/driverlib/interrupt.c>
 #include <ti/driverlib/rfc.c>
+#include <ti/driverlib/sys_ctrl.c>
+#include <ti/driverlib/cpu.c>
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif

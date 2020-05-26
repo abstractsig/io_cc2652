@@ -34,6 +34,7 @@ extern EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implemen
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_radio_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_dma_clock_implementation;
 
 
 typedef struct PACK_STRUCTURE cc2652_hf_rc_oscillator {
@@ -112,6 +113,11 @@ controlled_power_domain_turn_on (io_cpu_power_domain_pointer_t pd) {
     return true;
 }
 
+//
+// we can only turn a PD off when all clocks in that domain are off,
+// so we need to keep track of which clocks has requested the pd
+// to turn on
+//
 EVENT_DATA io_cpu_power_domain_implementation_t
 cpu_core_power_domain_implementation = {
     .turn_off = io_power_domain_no_operation,
@@ -310,25 +316,33 @@ cc2652_core_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
 
 static bool
 cc2652_core_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
-    if (io_cpu_dependant_clock_start_input (io,clock)) {
-        cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
-            io_cpu_clock_ro_pointer (clock)
-        );
+	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
+			io_cpu_clock_ro_pointer (clock)
+		);
 
-        if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
-            OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_RCOSC_HF);
-            //or OSCHF_SwitchToRcOscTurnOffXosc().
-        } else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
-            OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
-            while (!OSCHfSourceReady());
-            OSCHfSourceSwitch();
-        } else {
-            return false;
-        }
-        return true;
-    } else {
-        return false;
-    }
+		if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
+			OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_RCOSC_HF);
+			//or OSCHF_SwitchToRcOscTurnOffXosc().
+		} else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
+			switch (OSCClockSourceGet(OSC_SRC_CLK_HF)) {
+				case OSC_XOSC_HF:
+					// already
+				break;
+
+				default:
+					OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
+					while (!OSCHfSourceReady());
+					OSCHfSourceSwitch();
+				break;
+			}
+		} else {
+		  return false;
+		}
+		return true;
+	} else {
+		return false;
+	}
 }
 
 static io_cpu_power_domain_pointer_t
@@ -353,7 +367,14 @@ cc2652_peripheral_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 
         turn_on_io_power_domain (io,io_cpu_clock_power_domain (clock));
 
+        //
+        // enable in run-power-mode
+        //
         PRCMPeripheralRunEnable(this->prcm_peripheral_id);
+        //
+        // enable in sleep-power-mode
+        //
+        PRCMPeripheralSleepEnable(this->prcm_peripheral_id);
         PRCMLoadSet();
 
         return true;
@@ -440,5 +461,6 @@ EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
 	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_rtc_clock_start,
 };
+
 #endif /* IMPLEMENT_IO_CPU */
 #endif
