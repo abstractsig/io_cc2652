@@ -95,6 +95,7 @@ void	start_time_clock (io_cc2652_cpu_t*);
 #include <cc2652rb_pins.h>
 #include <cc2652rb_uart.h>
 #include <cc2652rb_radio.h>
+#include <cc2652_twi_master.h>
 
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------

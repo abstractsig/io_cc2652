@@ -69,6 +69,7 @@ typedef int32_t IRQn_Type;
 #include <ti/driverlib/prcm.c>
 #include <ti/driverlib/vims.c>
 #include <ti/driverlib/uart.c>
+#include <ti/driverlib/i2c.c>
 #include <ti/driverlib/interrupt.c>
 #include <ti/driverlib/rfc.c>
 #include <ti/driverlib/sys_ctrl.c>
