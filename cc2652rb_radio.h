@@ -587,7 +587,7 @@ cc2652rb_radio_receive_frame_receive (io_socket_t *socket) {
 	#if defined(CC2652_RADIO_SOCKET_LOG_LEVEL)
 	io_log (
 		io_socket_io (socket),
-		CC2652_RADIO_SOCKET_LOG_LEVEL,
+		IO_DETAIL_LOG_LEVEL,
 		"%-*s%-*slength = %u\n",
 		DBP_FIELD1,"radio",
 		DBP_FIELD2,"rx",
