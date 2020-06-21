@@ -36,9 +36,23 @@ typedef struct PACK_STRUCTURE cc2652_uart {
 // Implementation
 //
 //-----------------------------------------------------------------------------
-
-// interrupts must be disabled to use DMA
-#define USE_UART_DMA
+/*
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ *
+ * socket states
+ *
+ *               cc2652_uart_state_closed
+ *                 |        ^
+ *          <open> |        | <close>
+ *                 v        |
+ *               cc2652_uart_state_open
+ *
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ */
+static EVENT_DATA io_socket_state_t cc2652_uart_state_closed;
+static EVENT_DATA io_socket_state_t cc2652_uart_state_open;
 
 bool
 UARTisEnabled (uint32_t ui32Base) {
@@ -55,19 +69,21 @@ cc2652_uart_output_next_buffer (cc2652_uart_t *this) {
 		const uint8_t *byte,*end;
 		io_encoding_get_content (next,&byte,&end);
 
-#ifdef USE_UART_DMA
 		io_dma_transfer_to_peripheral (
 			(io_dma_channel_t*) &this->tx_dma_channel,byte,end - byte
 		);
 		HWREG (this->register_base_address + UART_O_DMACTL) |= (
 			UART_DMACTL_TXDMAE
 		);
-#else
+
+		/*
+		// keep just is case we need to test without DMA
 		while (byte < end) {
 			UARTCharPut (this->register_base_address,*byte++);
 		}
 		io_enqueue_event (this->io,&this->transmit_complete);
-#endif
+		*/
+
 		return true;
 	} else {
 		return false;
@@ -132,12 +148,41 @@ cc2652_uart_tx_dma_error (io_event_t *ev) {
 
 }
 
+static bool cc2652_uart_open (io_socket_t*,io_socket_open_flag_t);
+
+io_socket_state_t const*
+cc2652_uart_state_closed_open (io_socket_t *socket,io_socket_open_flag_t flag) {
+	if (cc2652_uart_open (socket,flag)) {
+		return &cc2652_uart_state_open;
+	} else {
+		return socket->State;
+	}
+}
+
+io_socket_state_t const*
+cc2652_uart_state_open_close (io_socket_t *socket) {
+	return socket->State;
+}
+
+static EVENT_DATA io_socket_state_t cc2652_uart_state_closed = {
+	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+	.name = "closed",
+	.open = cc2652_uart_state_closed_open,
+};
+
+static EVENT_DATA io_socket_state_t cc2652_uart_state_open = {
+	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+	.name = "open",
+	.close = cc2652_uart_state_open_close,
+};
+
 // has 32byte rx and tx fifos
 static io_socket_t*
 cc2652_uart_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	cc2652_uart_t *this = (cc2652_uart_t*) socket;
 	this->io = io;
-
+	this->State = &cc2652_uart_state_closed;
+	
 	this->tx_pipe = mk_io_encoding_pipe (io_get_byte_memory(io),C->transmit_pipe_length);
 
 	this->rx_pipe = mk_io_byte_pipe (

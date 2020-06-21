@@ -135,7 +135,6 @@ cc2652_configure_io_pin_as_output (cc2652_io_pin_t pin) {
     IOCPinTypeGpioOutput(cc2652_io_pin_number(pin));
 }
 
-
 void
 cc2652_toggle_io_pin (io_t *io,io_pin_t rpin) {
     cc2652_io_pin_t pin = {rpin};
@@ -175,6 +174,11 @@ cc2652_set_io_pin_to_alternate (io_t *io,io_pin_t rpin) {
 //
 void
 cc2652_release_io_pin (io_t *io,io_pin_t rpin) {
+   cc2652_io_pin_t pin = {rpin};
+	cc2652_io_pin_t unused = def_cc2652_io_input_pin (
+		cc2652_io_pin_number(pin),IO_PIN_ACTIVE_LEVEL_LOW,IO_PIN_NO_PULL
+	);
+	cc2652_configure_io_pin_as_input (unused);
 }
 
 bool
