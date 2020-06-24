@@ -605,7 +605,7 @@ static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_radio_receive_frame = 
 	.enter = cc2652rb_radio_receive_frame_enter,
 	.command_acknowledge = cc2652rb_radio_receive_frame_command_acknowledge,
 	.command_done = cc2652rb_radio_receive_frame_command_done,
-	.receive = cc2652rb_radio_receive_frame_receive,
+	.outer_receive_event = cc2652rb_radio_receive_frame_receive,
 };
 
 static io_socket_state_t const*
@@ -742,9 +742,7 @@ cc2652rb_radio_command_done_event (io_event_t *ev) {
 static void
 cc2652rb_radio_receive_event (io_event_t *ev) {
 	io_socket_t *socket = ev->user_value;
-	io_socket_call_state (
-		socket,((io_cc2652_radio_socket_state_t const*) socket->State)->receive
-	);
+	io_socket_call_state (socket,socket->State->outer_receive_event);
 }
 
 static io_socket_t*

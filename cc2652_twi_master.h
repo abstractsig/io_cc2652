@@ -20,8 +20,7 @@ typedef struct PACK_STRUCTURE cc2652_twi_master {
 	io_twi_transfer_t current_transfer;
 	io_event_t transfer_complete;
 	
-	const uint8_t *next_byte,*end;
-	io_encoding_pipe_t *rx_pipe;
+	const uint8_t *next_transmit_byte,*end;
 
 	uint32_t register_base_address;
 	uint32_t interrupt_number;
@@ -43,6 +42,16 @@ extern EVENT_DATA io_socket_implementation_t cc2652_twi_master_implementation;
 // Implementation
 //
 //-----------------------------------------------------------------------------
+typedef struct cc2652_twi_master_socket_state {
+	IO_SOCKET_STATE_STRUCT_MEMBERS
+	io_socket_state_t const* (*transfer_complete) (io_socket_t*);
+} cc2652_twi_master_socket_state_t;
+
+#define SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE(S) \
+		SPECIALISE_IO_SOCKET_STATE(S)\
+		.transfer_complete = io_socket_state_ignore_event,\
+		/**/
+
 /*
  *-----------------------------------------------------------------------------
  *-----------------------------------------------------------------------------
@@ -54,19 +63,26 @@ extern EVENT_DATA io_socket_implementation_t cc2652_twi_master_implementation;
  *          <open> |        | <close>
  *                 v        |
  *               io_twi_master_socket_state_open
+ *                 |        ^
+ *                 v        |
+ *               io_twi_master_socket_state_busy
  *
  *-----------------------------------------------------------------------------
  *-----------------------------------------------------------------------------
  */
-static EVENT_DATA io_socket_state_t io_twi_master_socket_state_closed;
-static EVENT_DATA io_socket_state_t io_twi_master_socket_state_open;
+static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_closed;
+static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_open;
+static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_busy;
 
 static bool cc2652_twi_master_open (io_socket_t*,io_socket_open_flag_t);
+static void	cc2652_twi_master_transfer_complete (io_event_t*);
+static bool cc2652_twi_master_output_next_buffer (cc2652_twi_master_t*);
+
 
 io_socket_state_t const*
 io_twi_master_socket_state_closed_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	if (cc2652_twi_master_open (socket,flag)) {
-		return &io_twi_master_socket_state_open;
+		return (io_socket_state_t const*) &io_twi_master_socket_state_open;
 	} else {
 		return socket->State;
 	}
@@ -79,15 +95,31 @@ io_twi_master_socket_state_closed_open_for_inner (
 	return io_twi_master_socket_state_closed_open (socket,flag);
 }
 
-static EVENT_DATA io_socket_state_t io_twi_master_socket_state_closed = {
-	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_closed = {
+	SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE (&io_socket_state)
 	.name = "closed",
 	.open_for_inner = io_twi_master_socket_state_closed_open_for_inner,
 };
 
+//
+// on entry, see if we have stuff to send
+// if not signal tx available
+//
+
+io_socket_state_t const*
+io_twi_master_socket_state_open_send (io_socket_t *socket) {
+	cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
+
+	if (cc2652_twi_master_output_next_buffer(this)) {
+		return (io_socket_state_t const*) &io_twi_master_socket_state_busy;
+	} else {
+		return socket->State;
+	}
+}
+
 io_socket_state_t const*
 io_twi_master_socket_state_open_close (io_socket_t *socket) {
-	return &io_twi_master_socket_state_closed;
+	return (io_socket_state_t const*) &io_twi_master_socket_state_closed;
 }
 
 io_socket_state_t const*
@@ -95,11 +127,17 @@ io_twi_master_socket_state_open_inner_closed (io_socket_t *socket,io_address_t i
 	return socket->State;
 }
 
-static EVENT_DATA io_socket_state_t io_twi_master_socket_state_open = {
-	SPECIALISE_IO_SOCKET_STATE (&io_socket_state)
+static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_open = {
+	SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE (&io_socket_state)
 	.name = "open",
+	.inner_send = io_twi_master_socket_state_open_send,
 	.close = io_twi_master_socket_state_open_close,
 	.inner_closed = io_twi_master_socket_state_open_inner_closed,
+};
+
+static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_busy = {
+	SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE (&io_socket_state)
+	.name = "busy",
 };
 
 static void
@@ -107,7 +145,210 @@ cc2652_twi_master_interrupt (void *user_value) {
 	cc2652_twi_master_t *this = user_value;
 
 	I2CMasterIntClear (this->register_base_address);
+
+   if (I2CMasterBusy(this->register_base_address)) {
+       return;
+   }
+
+   //
+   // could be end of a stop?
+   //
+
+   uint32_t status = HWREG(this->register_base_address + I2C_O_MSTAT);
+//   uint32_t command = I2C_MCTRL_RUN;
+
+   if (status & (I2C_MSTAT_ERR | I2C_MSTAT_ARBLST)) {
+
+      I2CMasterControl(this->register_base_address, I2C_MCTRL_STOP);
+
+      //io_enqueue_event (io_socket_io(this),&this->transfer_error);
+
+   } else {
+   	io_twi_transfer_t *current = &this->current_transfer;
+
+		if (io_twi_transfer_tx_length (current) > 0) {
+			io_twi_transfer_tx_length(current)--;
+			this->next_transmit_byte ++;
+
+			if (io_twi_transfer_tx_length (current) > 0) {
+				I2CMasterDataPut (
+					this->register_base_address,*this->next_transmit_byte
+				);
+			} else {
+				if (io_twi_transfer_rx_length (current) == 0) {
+					goto stop;
+				} else {
+					uint32_t command = (I2C_MCTRL_START | I2C_MCTRL_RUN);
+					// repeat-start
+	            I2CMasterSlaveAddrSet (
+	            	this->register_base_address,
+						io_twi_transfer_bus_address(&this->current_transfer),
+						true
+					);
+
+	            if (io_twi_transfer_rx_length (current) > 1) {
+	                /* RUN and generate ACK to slave */
+	                command |= I2C_MCTRL_ACK;
+	            }
+
+	            /* RUN and generate a repeated START */
+	            command |= I2C_MCTRL_START;
+	            I2CMasterControl(
+	            	this->register_base_address, command
+					);
+				}
+			}
+		} else if (io_twi_transfer_rx_length (current) > 0) {
+			uint32_t command = I2C_MCTRL_RUN;
+			volatile uint8_t byte;
+
+			io_twi_transfer_rx_length (current) --;
+			byte = I2CMasterDataGet(this->register_base_address);
+			UNUSED(byte);
+
+			if (io_twi_transfer_rx_length (current) > 1) {
+				command |= I2C_MCTRL_ACK;
+			} else if (io_twi_transfer_rx_length (current) == 0) {
+				goto stop;
+			}
+
+			I2CMasterControl(this->register_base_address, command);
+
+		} else {
+			goto stop;
+		}
+   }
+   return;
+
+stop:
+	I2CMasterControl(this->register_base_address, I2C_MCTRL_STOP);
+	// do i get another interrupt or is this the end?
+	io_enqueue_event (io_socket_io(this),&this->transfer_complete);
+
+	return;
+
 }
+
+#if 0
+/*
+ *  ======== I2CCC26XX_hwiFxn ========
+ *  Hwi interrupt handler to service the I2C peripheral
+ *
+ *  The handler is a generic handler for a I2C object.
+ */
+static void I2CCC26XX_hwiFxn(uintptr_t arg)
+{
+    I2C_Handle handle = (I2C_Handle) arg;
+    I2CCC26XX_Object *object = handle->object;
+    I2CCC26XX_HWAttrsV1 const *hwAttrs = handle->hwAttrs;
+    uint32_t command = I2C_MCTRL_RUN;
+
+    /* Clear the interrupt */
+    I2CMasterIntClear(hwAttrs->baseAddr);
+
+    /*
+     * Check if the Master is busy. If busy, the MSTAT is invalid as
+     * the controller is still transmitting or receiving. In that case,
+     * we should wait for the next interrupt.
+     */
+    if (I2CMasterBusy(hwAttrs->baseAddr)) {
+        return;
+    }
+
+    uint32_t status = HWREG(I2C0_BASE + I2C_O_MSTAT);
+
+    /* Current transaction is cancelled */
+    if (object->currentTransaction->status == I2C_STATUS_CANCEL) {
+        I2CMasterControl(hwAttrs->baseAddr, I2C_MCTRL_STOP);
+        I2CCC26XX_completeTransfer(handle);
+        return;
+    }
+
+    /* Handle errors. ERR bit is not set if arbitration lost */
+    if (status & (I2C_MSTAT_ERR | I2C_MSTAT_ARBLST)) {
+        /* Decode interrupt status */
+        if (status & I2C_MSTAT_ARBLST) {
+            object->currentTransaction->status = I2C_STATUS_ARB_LOST;
+        }
+        /*
+         * The I2C peripheral has an issue where the first data byte
+         * is always transmitted, regardless of the ADDR NACK. Therefore,
+         * we should check this error condition first.
+         */
+        else if (status & I2C_MSTAT_ADRACK_N) {
+            object->currentTransaction->status = I2C_STATUS_ADDR_NACK;
+        }
+        else {
+            /* Last possible bit is the I2C_MSTAT_DATACK_N */
+            object->currentTransaction->status = I2C_STATUS_DATA_NACK;
+        }
+
+        /*
+         * The CC13X2 / CC26X2 I2C peripheral does not have an explicit STOP
+         * interrupt bit. Therefore, if an error occurred, we send the STOP
+         * bit and complete the transfer immediately.
+         */
+        I2CMasterControl(hwAttrs->baseAddr, I2C_MCTRL_STOP);
+        I2CCC26XX_completeTransfer(handle);
+    }
+    else if (object->writeCount) {
+        object->writeCount--;
+
+        /* Is there more to transmit */
+        if (object->writeCount) {
+            I2CMasterDataPut(hwAttrs->baseAddr, *(object->writeBuf++));
+        }
+        /* If we need to receive */
+        else if (object->readCount) {
+
+            /* Place controller in receive mode */
+            I2CMasterSlaveAddrSet(hwAttrs->baseAddr,
+                object->currentTransaction->slaveAddress, true);
+
+            if (object->readCount > 1) {
+                /* RUN and generate ACK to slave */
+                command |= I2C_MCTRL_ACK;
+            }
+
+            /* RUN and generate a repeated START */
+            command |= I2C_MCTRL_START;
+        }
+        else {
+            /* Send STOP */
+            command = I2C_MCTRL_STOP;
+        }
+
+        I2CMasterControl(hwAttrs->baseAddr, command);
+    }
+    else if (object->readCount) {
+        object->readCount--;
+
+        /* Read data */
+        *(object->readBuf++) = I2CMasterDataGet(hwAttrs->baseAddr);
+
+        if (object->readCount > 1) {
+            /* Send ACK and RUN */
+            command |= I2C_MCTRL_ACK;
+        }
+        else if (object->readCount < 1) {
+            /* Send STOP */
+            command = I2C_MCTRL_STOP;
+        }
+        else {
+            /* Send RUN */
+        }
+
+        I2CMasterControl(hwAttrs->baseAddr, command);
+    }
+    else {
+        I2CMasterControl(hwAttrs->baseAddr, I2C_MCTRL_STOP);
+        object->currentTransaction->status = I2C_STATUS_SUCCESS;
+        I2CCC26XX_completeTransfer(handle);
+    }
+
+    return;
+}
+#endif
 
 static io_socket_t*
 cc2652_twi_master_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
@@ -116,14 +357,26 @@ cc2652_twi_master_initialise (io_socket_t *socket,io_t *io,io_settings_t const *
 	io_twi_master_socket_initialise (socket,io,C);
 	this->encoding = C->encoding;
 
+	initialise_io_event (
+		&this->transfer_complete,cc2652_twi_master_transfer_complete,this
+	);
+
 	register_io_interrupt_handler (
 		io,this->interrupt_number,cc2652_twi_master_interrupt,this
 	);
 
-	this->State = &io_twi_master_socket_state_closed;
+	this->State = (io_socket_state_t const*) &io_twi_master_socket_state_closed;
 	io_socket_enter_current_state (socket);
 
 	return socket;
+}
+
+static void
+cc2652_twi_master_transfer_complete (io_event_t *ev) {
+	io_socket_t *socket = ev->user_value;
+	io_socket_call_state (
+		socket,((cc2652_twi_master_socket_state_t const*) socket->State)->transfer_complete
+	);
 }
 
 bool
@@ -145,7 +398,7 @@ cc2652_twi_master_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 			I2CMasterInitExpClk (
 				this->register_base_address,
 				(uint32_t) freq,
-			   true //fast
+			   this->maximum_speed > 100000
 			);
 
 			I2CMasterIntEnable (this->register_base_address);
@@ -181,46 +434,77 @@ cc2652_twi_master_close (io_socket_t *socket) {
 	}
 }
 
-
 static bool
 cc2652_twi_master_output_next_buffer (cc2652_twi_master_t *this) {
-	io_encoding_t *next;
-	if (io_encoding_pipe_peek (this->tx_pipe,&next)) {
-		io_twi_transfer_t *cmd = io_encoding_get_layer (next,&io_twi_layer_implementation);
+	io_inner_binding_t *tx = io_multiplex_socket_get_next_transmit_binding (
+		(io_multiplex_socket_t*) this
+	);
 
-		this->current_transfer = *cmd;
-		I2CMasterSlaveAddrSet (this->register_base_address,io_twi_transfer_bus_address(cmd),false);
+	if (tx) {
+		io_encoding_t *next;
+		if (io_encoding_pipe_peek (io_inner_binding_transmit_pipe(tx),&next)) {
+			io_twi_transfer_t *cmd = get_twi_layer (next);
+			if (cmd) {
 
-		io_encoding_get_content (next,&this->next_byte,&this->end);
-		if (
-				this->end - this->next_byte
-			&& io_twi_transfer_tx_length(&this->current_transfer) > 0
-		) {
-//			this->registers->TASKS_STARTTX = 1;
-//			this->registers->TXD = *(this->next_byte)++;
-			io_twi_transfer_tx_length(&this->current_transfer)--;
-		} else {
-			// get and free ...
+				this->current_transfer = *cmd;
+
+				I2CMasterSlaveAddrSet (
+					this->register_base_address,
+					io_twi_transfer_bus_address(cmd),
+					false
+				);
+
+				io_encoding_get_content (next,&this->next_transmit_byte,&this->end);
+				if (
+						this->end - this->next_transmit_byte
+					&& io_twi_transfer_tx_length(&this->current_transfer) > 0
+				) {
+					I2CMasterDataPut (
+						this->register_base_address,*this->next_transmit_byte
+					);
+					I2CMasterControl (
+						this->register_base_address,
+						(I2C_MCTRL_START | I2C_MCTRL_RUN)
+					);
+				} else {
+					// get and free ...
+				}
+#if 0
+				io_log (
+					io_socket_io (this),
+					IO_INFO_LOG_LEVEL,
+					"%-*s%-*sstatus = 0x%x\n",
+					DBP_FIELD1,"twi",
+					DBP_FIELD2,"send",
+					HWREG(this->register_base_address + I2C_O_MSTAT)
+				);
+#endif
+
+				return true;
+			}
 		}
-		return true;
-	} else {
-		return false;
 	}
+
+	return false;
 }
 
 static bool
 cc2652_twi_master_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 	bool ok = false;
 
-	if (is_io_twi_encoding (encoding)) {
-		cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
-		if (io_encoding_pipe_put_encoding (this->tx_pipe,encoding)) {
-			if (io_encoding_pipe_count_occupied_slots (this->tx_pipe) == 1) {
-				cc2652_twi_master_output_next_buffer (this);
+	io_layer_t *twi = get_twi_layer (encoding);
+	if (twi) {
+		io_address_t addr = io_layer_get_destination_address(twi,encoding);
+		io_inner_binding_t *inner = io_multiplex_socket_find_inner_binding (
+			(io_multiplex_socket_t*) socket,addr
+		);
+		if (inner) {
+			if (io_encoding_pipe_put_encoding (io_inner_binding_transmit_pipe(inner),encoding)) {
+				io_socket_call_state (socket,socket->State->inner_send);
 			}
-			ok = true;
 		}
 	}
+
 	unreference_io_encoding (encoding);
 	return ok;
 }

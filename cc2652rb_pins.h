@@ -12,20 +12,24 @@ typedef union PACK_STRUCTURE {
     struct PACK_STRUCTURE {
         uint32_t number:6;
         uint32_t ioc_port_id:6;
+        uint32_t direction:1;
+        uint32_t io_mode:3;
         uint32_t active_level:1;
         uint32_t initial_state:1;
         uint32_t pull_mode:2;
-        uint32_t drive_level:3;
-        uint32_t hysteresis:1;
-        uint32_t :12;
+        uint32_t io_drive_current:2;
+        uint32_t io_drive_source:2;
+        uint32_t :8;
     } cc;
 } cc2652_io_pin_t;
 
-#define cc2652_io_pin_number(pin)               (pin).cc.number
-#define cc2652_io_pin_pull_mode(pin)            (pin).cc.pull_mode
-#define cc2652_io_pin_active_level(pin)     (pin).cc.active_level
-#define cc2652_io_pin_initial_state(pin)        (pin).cc.initial_state
-#define cc2652_io_pin_ioc_port_id(pin)          (pin).cc.ioc_port_id
+#define cc2652_io_pin_number(pin)				(pin).cc.number
+#define cc2652_io_pin_direction(pin)			(pin).cc.direction
+#define cc2652_io_pin_mode(pin)					(pin).cc.io_mode
+#define cc2652_io_pin_pull_mode(pin)			(pin).cc.pull_mode
+#define cc2652_io_pin_active_level(pin)		(pin).cc.active_level
+#define cc2652_io_pin_initial_state(pin)		(pin).cc.initial_state
+#define cc2652_io_pin_ioc_port_id(pin)			(pin).cc.ioc_port_id
 
 #define IO_PIN_ACTIVE_LEVEL_HIGH        1
 #define IO_PIN_ACTIVE_LEVEL_LOW     0
@@ -33,37 +37,38 @@ typedef union PACK_STRUCTURE {
 #define IO_PIN_LEVEL_ACTIVE         1
 #define IO_PIN_LEVEL_INACTIVE           0
 
-#define IO_PIN_NO_PULL      0       //  IOC_NO_IOPULL
-#define IO_PIN_PULL_UP      1       // IOC_IOPULL_UP
-#define IO_PIN_PULL_DOWN    2       // IOC_IOPULL_DOWN
-
 #define def_cc2652_io_input_pin(pin_number,active,pull) (cc2652_io_pin_t) {\
         .cc.number = pin_number,\
+		  .cc.direction = 1,\
         .cc.active_level = active,\
         .cc.initial_state = IO_PIN_LEVEL_INACTIVE,\
         .cc.pull_mode = pull,\
-        .cc.drive_level = 0,\
-        .cc.hysteresis = 0,\
+        .cc.io_drive_current = 0,\
+        .cc.io_drive_source = 0,\
         .cc.ioc_port_id = IOC_PORT_GPIO,\
     }
 
 #define def_cc2652_io_output_pin(pin_number,active,initial) (cc2652_io_pin_t) {\
         .cc.number = pin_number,\
+		  .cc.direction = 0,\
+		  .cc.io_mode = IO_PIN_MODE_NORMAL,\
         .cc.active_level = active,\
         .cc.initial_state = initial,\
         .cc.pull_mode = IO_PIN_NO_PULL,\
-        .cc.drive_level = 0,\
-        .cc.hysteresis = 0,\
+        .cc.io_drive_current = 0,\
+        .cc.io_drive_source = 0,\
         .cc.ioc_port_id = IOC_PORT_GPIO,\
     }
 
-#define def_cc2652_io_alternate_pin(pin_number,active,IOC) (cc2652_io_pin_t) {\
+#define def_cc2652_io_alternate_pin(pin_number,dir,mode,pull,active,IOC) (cc2652_io_pin_t) {\
         .cc.number = pin_number,\
+		  .cc.direction = dir,\
+		  .cc.io_mode = mode,\
         .cc.active_level = active,\
         .cc.initial_state = IO_PIN_LEVEL_INACTIVE,\
-        .cc.pull_mode = IO_PIN_NO_PULL,\
-        .cc.drive_level = 0,\
-        .cc.hysteresis = 0,\
+        .cc.pull_mode = pull,\
+        .cc.io_drive_current = 0,\
+        .cc.io_drive_source = 0,\
         .cc.ioc_port_id = IOC,\
     }
 
@@ -74,12 +79,31 @@ typedef union PACK_STRUCTURE {
         .cc.active_level = IO_PIN_ACTIVE_LEVEL_HIGH,\
         .cc.initial_state = IO_PIN_LEVEL_INACTIVE,\
         .cc.pull_mode = IO_PIN_NO_PULL,\
-        .cc.drive_level = 0,\
-        .cc.hysteresis = 0,\
+        .cc.io_drive_current = 0,\
+        .cc.io_drive_source = 0,\
         .cc.ioc_port_id = IOC_PORT_GPIO,\
     }
 
 
+#define IO_PIN_MODE(m)							((m) >> 24)
+#define IO_PIN_MODE_NORMAL						IO_PIN_MODE(IOC_IOMODE_NORMAL)
+#define IO_PIN_MODE_INVERTED					IO_PIN_MODE(IOC_IOMODE_INV)
+#define IO_PIN_MODE_OPEN_DRAIN_NORMAL		IO_PIN_MODE(IOC_IOMODE_OPEN_DRAIN_NORMAL)
+#define IO_PIN_MODE_OPEN_DRAIN_INVERTED	IO_PIN_MODE(IOC_IOMODE_OPEN_DRAIN_INV)
+#define IO_PIN_MODE_OPEN_SOURCE_NORMAL		IO_PIN_MODE(IOC_IOMODE_OPEN_SRC_NORMAL)
+#define IO_PIN_MODE_OPEN_SOURCE_INVERTED	IO_PIN_MODE(IOC_IOMODE_OPEN_SRC_INV)
+
+#define IO_PIN_CURRENT(m)						((m) >> 10)
+#define IO_PIN_CURRENT_2MA						IO_PIN_CURRENT(IOC_CURRENT_2MA)
+#define IO_PIN_CURRENT_4MA						IO_PIN_CURRENT(IOC_CURRENT_4MA)
+#define IO_PIN_CURRENT_8MA						IO_PIN_CURRENT(IOC_CURRENT_8MA)
+
+#define IO_PIN_NO_PULL							(IOC_NO_IOPULL >> 13)
+#define IO_PIN_PULL_UP							(IOC_IOPULL_UP >> 13)
+#define IO_PIN_PULL_DOWN						(IOC_IOPULL_DOWN >> 13)
+
+#define IO_PIN_DIRECTION_INPUT				1
+#define IO_PIN_DIRECTION_OUTPUT				0
 
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
@@ -101,32 +125,31 @@ cc2652_write_to_io_pin (io_t *io,io_pin_t rpin,int32_t state) {
 
 static void
 cc2652_configure_io_pin_as_alternate (cc2652_io_pin_t pin) {
-    IOCPortConfigureSet (
-        cc2652_io_pin_number (pin),
-        cc2652_io_pin_ioc_port_id (pin),
-        (
-                IOC_NO_IOPULL
-            |   0
-        )
-    );
+	IOCPortConfigureSet (
+		cc2652_io_pin_number (pin),
+		cc2652_io_pin_ioc_port_id (pin),
+		(
+				(cc2652_io_pin_pull_mode (pin) << 13)
+			|	(cc2652_io_pin_mode (pin) << 24)
+			|	(IOC_CURRENT_2MA << 10)
+			|	(IOC_STRENGTH_AUTO)
+			|	(cc2652_io_pin_direction(pin) ? IOC_INPUT_ENABLE : 0)
+			|	IOC_SLEW_DISABLE
+			|	IOC_HYST_DISABLE
+			|	IOC_NO_EDGE
+			|	IOC_INT_DISABLE
+			|	IOC_NO_WAKE_UP
+	  )
+	);
 }
 
 static void
 cc2652_configure_io_pin_as_input (cc2652_io_pin_t pin) {
-    switch (cc2652_io_pin_pull_mode(pin)) {
-        case IO_PIN_NO_PULL:
-            IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_NO_IOPULL);
-        break;
-
-        case IO_PIN_PULL_UP:
-            IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_IOPULL_UP);
-        break;
-
-        case IO_PIN_PULL_DOWN:
-            IOCIOPortPullSet (cc2652_io_pin_number(pin),IOC_IOPULL_DOWN);
-        break;
-    }
-    IOCPinTypeGpioInput(cc2652_io_pin_number(pin));
+	IOCIOPortPullSet (
+		cc2652_io_pin_number(pin),
+		(cc2652_io_pin_pull_mode(pin) << 13)
+	);
+	IOCPinTypeGpioInput(cc2652_io_pin_number(pin));
 }
 
 static void
