@@ -21,6 +21,7 @@ typedef struct PACK_STRUCTURE cc2652_twi_master {
 	io_event_t transfer_complete;
 	
 	const uint8_t *next_transmit_byte,*end;
+	io_encoding_t *current_receive_message;
 
 	uint32_t register_base_address;
 	uint32_t interrupt_number;
@@ -47,9 +48,19 @@ typedef struct cc2652_twi_master_socket_state {
 	io_socket_state_t const* (*transfer_complete) (io_socket_t*);
 } cc2652_twi_master_socket_state_t;
 
+io_socket_state_t const*
+io_twi_master_socket_state_ignore_transfer_complete (io_socket_t *socket) {
+	cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
+	if (this->current_receive_message != NULL) {
+		io_encoding_free (this->current_receive_message);
+		this->current_receive_message = NULL;
+	}
+	return socket->State;
+}
+
 #define SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE(S) \
 		SPECIALISE_IO_SOCKET_STATE(S)\
-		.transfer_complete = io_socket_state_ignore_event,\
+		.transfer_complete = io_twi_master_socket_state_ignore_transfer_complete,\
 		/**/
 
 /*
@@ -135,9 +146,39 @@ static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_op
 	.inner_closed = io_twi_master_socket_state_open_inner_closed,
 };
 
+io_socket_state_t const*
+io_twi_master_socket_state_busy_end (io_socket_t *socket) {
+	cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
+
+	if (this->current_receive_message != NULL) {
+		io_layer_t *layer = get_twi_layer (this->current_receive_message);
+
+		if (layer == NULL) {
+			io_panic (io_socket_io (this),IO_PANIC_SOMETHING_BAD_HAPPENED);
+		}
+
+		io_inner_binding_t *inner = io_multiplex_socket_find_inner_binding (
+			(io_multiplex_socket_t*) this,
+			io_layer_get_source_address (layer,this->current_receive_message)
+		);
+		if (inner != NULL) {
+			io_encoding_pipe_put_encoding (
+				io_inner_binding_receive_pipe (inner),this->current_receive_message
+			);
+			io_enqueue_event (io_socket_io(this),io_inner_binding_receive_event(inner));
+		}
+
+		unreference_io_encoding (this->current_receive_message);
+		this->current_receive_message = NULL;
+	}
+
+	return (io_socket_state_t const*) &io_twi_master_socket_state_open;
+}
+
 static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_busy = {
 	SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE (&io_socket_state)
 	.name = "busy",
+	.transfer_complete = io_twi_master_socket_state_busy_end,
 };
 
 static void
@@ -155,7 +196,6 @@ cc2652_twi_master_interrupt (void *user_value) {
    //
 
    uint32_t status = HWREG(this->register_base_address + I2C_O_MSTAT);
-//   uint32_t command = I2C_MCTRL_RUN;
 
    if (status & (I2C_MSTAT_ERR | I2C_MSTAT_ARBLST)) {
 
@@ -175,7 +215,13 @@ cc2652_twi_master_interrupt (void *user_value) {
 					this->register_base_address,*this->next_transmit_byte
 				);
 			} else {
+				//
+				// single byte transmit
+				//
 				if (io_twi_transfer_rx_length (current) == 0) {
+					//
+					// no response, so stop
+					//
 					goto stop;
 				} else {
 					uint32_t command = (I2C_MCTRL_START | I2C_MCTRL_RUN);
@@ -187,11 +233,11 @@ cc2652_twi_master_interrupt (void *user_value) {
 					);
 
 	            if (io_twi_transfer_rx_length (current) > 1) {
-	                /* RUN and generate ACK to slave */
+	                // acknowledge received byte
 	                command |= I2C_MCTRL_ACK;
 	            }
 
-	            /* RUN and generate a repeated START */
+	            // run with repeated START
 	            command |= I2C_MCTRL_START;
 	            I2CMasterControl(
 	            	this->register_base_address, command
@@ -204,7 +250,7 @@ cc2652_twi_master_interrupt (void *user_value) {
 
 			io_twi_transfer_rx_length (current) --;
 			byte = I2CMasterDataGet(this->register_base_address);
-			UNUSED(byte);
+			io_encoding_append_byte (this->current_receive_message,byte);
 
 			if (io_twi_transfer_rx_length (current) > 1) {
 				command |= I2C_MCTRL_ACK;
@@ -215,140 +261,23 @@ cc2652_twi_master_interrupt (void *user_value) {
 			I2CMasterControl(this->register_base_address, command);
 
 		} else {
+
+			//
+
 			goto stop;
 		}
    }
    return;
 
 stop:
-	I2CMasterControl(this->register_base_address, I2C_MCTRL_STOP);
-	// do i get another interrupt or is this the end?
-	io_enqueue_event (io_socket_io(this),&this->transfer_complete);
-
+	if (I2CMasterBusBusy (this->register_base_address)) {
+		I2CMasterControl(this->register_base_address, I2C_MCTRL_STOP);
+	} else {
+		io_enqueue_event (io_socket_io(this),&this->transfer_complete);
+	}
 	return;
 
 }
-
-#if 0
-/*
- *  ======== I2CCC26XX_hwiFxn ========
- *  Hwi interrupt handler to service the I2C peripheral
- *
- *  The handler is a generic handler for a I2C object.
- */
-static void I2CCC26XX_hwiFxn(uintptr_t arg)
-{
-    I2C_Handle handle = (I2C_Handle) arg;
-    I2CCC26XX_Object *object = handle->object;
-    I2CCC26XX_HWAttrsV1 const *hwAttrs = handle->hwAttrs;
-    uint32_t command = I2C_MCTRL_RUN;
-
-    /* Clear the interrupt */
-    I2CMasterIntClear(hwAttrs->baseAddr);
-
-    /*
-     * Check if the Master is busy. If busy, the MSTAT is invalid as
-     * the controller is still transmitting or receiving. In that case,
-     * we should wait for the next interrupt.
-     */
-    if (I2CMasterBusy(hwAttrs->baseAddr)) {
-        return;
-    }
-
-    uint32_t status = HWREG(I2C0_BASE + I2C_O_MSTAT);
-
-    /* Current transaction is cancelled */
-    if (object->currentTransaction->status == I2C_STATUS_CANCEL) {
-        I2CMasterControl(hwAttrs->baseAddr, I2C_MCTRL_STOP);
-        I2CCC26XX_completeTransfer(handle);
-        return;
-    }
-
-    /* Handle errors. ERR bit is not set if arbitration lost */
-    if (status & (I2C_MSTAT_ERR | I2C_MSTAT_ARBLST)) {
-        /* Decode interrupt status */
-        if (status & I2C_MSTAT_ARBLST) {
-            object->currentTransaction->status = I2C_STATUS_ARB_LOST;
-        }
-        /*
-         * The I2C peripheral has an issue where the first data byte
-         * is always transmitted, regardless of the ADDR NACK. Therefore,
-         * we should check this error condition first.
-         */
-        else if (status & I2C_MSTAT_ADRACK_N) {
-            object->currentTransaction->status = I2C_STATUS_ADDR_NACK;
-        }
-        else {
-            /* Last possible bit is the I2C_MSTAT_DATACK_N */
-            object->currentTransaction->status = I2C_STATUS_DATA_NACK;
-        }
-
-        /*
-         * The CC13X2 / CC26X2 I2C peripheral does not have an explicit STOP
-         * interrupt bit. Therefore, if an error occurred, we send the STOP
-         * bit and complete the transfer immediately.
-         */
-        I2CMasterControl(hwAttrs->baseAddr, I2C_MCTRL_STOP);
-        I2CCC26XX_completeTransfer(handle);
-    }
-    else if (object->writeCount) {
-        object->writeCount--;
-
-        /* Is there more to transmit */
-        if (object->writeCount) {
-            I2CMasterDataPut(hwAttrs->baseAddr, *(object->writeBuf++));
-        }
-        /* If we need to receive */
-        else if (object->readCount) {
-
-            /* Place controller in receive mode */
-            I2CMasterSlaveAddrSet(hwAttrs->baseAddr,
-                object->currentTransaction->slaveAddress, true);
-
-            if (object->readCount > 1) {
-                /* RUN and generate ACK to slave */
-                command |= I2C_MCTRL_ACK;
-            }
-
-            /* RUN and generate a repeated START */
-            command |= I2C_MCTRL_START;
-        }
-        else {
-            /* Send STOP */
-            command = I2C_MCTRL_STOP;
-        }
-
-        I2CMasterControl(hwAttrs->baseAddr, command);
-    }
-    else if (object->readCount) {
-        object->readCount--;
-
-        /* Read data */
-        *(object->readBuf++) = I2CMasterDataGet(hwAttrs->baseAddr);
-
-        if (object->readCount > 1) {
-            /* Send ACK and RUN */
-            command |= I2C_MCTRL_ACK;
-        }
-        else if (object->readCount < 1) {
-            /* Send STOP */
-            command = I2C_MCTRL_STOP;
-        }
-        else {
-            /* Send RUN */
-        }
-
-        I2CMasterControl(hwAttrs->baseAddr, command);
-    }
-    else {
-        I2CMasterControl(hwAttrs->baseAddr, I2C_MCTRL_STOP);
-        object->currentTransaction->status = I2C_STATUS_SUCCESS;
-        I2CCC26XX_completeTransfer(handle);
-    }
-
-    return;
-}
-#endif
 
 static io_socket_t*
 cc2652_twi_master_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
@@ -356,6 +285,7 @@ cc2652_twi_master_initialise (io_socket_t *socket,io_t *io,io_settings_t const *
 
 	io_twi_master_socket_initialise (socket,io,C);
 	this->encoding = C->encoding;
+	this->current_receive_message = NULL;
 
 	initialise_io_event (
 		&this->transfer_complete,cc2652_twi_master_transfer_complete,this
@@ -448,17 +378,32 @@ cc2652_twi_master_output_next_buffer (cc2652_twi_master_t *this) {
 
 				this->current_transfer = *cmd;
 
+				if (io_twi_transfer_rx_length(&this->current_transfer) > 0) {
+					// we need a receive message
+					io_encoding_t *message  = new_io_encoding (
+						this->encoding,io_get_byte_memory (io_socket_io (this))
+					);
+					if (message != NULL) {
+						io_layer_t *layer = push_io_twi_receive_layer (message);
+						if (layer != NULL) {
+							io_layer_set_source_address (layer,message,io_inner_binding_address(tx));
+						} else {
+							io_panic (io_socket_io (this),IO_PANIC_OUT_OF_MEMORY);
+						}
+						this->current_receive_message = reference_io_encoding (message);
+					} else {
+						io_panic (io_socket_io (this),IO_PANIC_OUT_OF_MEMORY);
+					}
+				}
 				I2CMasterSlaveAddrSet (
 					this->register_base_address,
 					io_twi_transfer_bus_address(cmd),
 					false
 				);
 
-				io_encoding_get_content (next,&this->next_transmit_byte,&this->end);
-				if (
-						this->end - this->next_transmit_byte
-					&& io_twi_transfer_tx_length(&this->current_transfer) > 0
-				) {
+				if (io_twi_transfer_tx_length (&this->current_transfer) > 0) {
+					io_encoding_get_content (next,&this->next_transmit_byte,&this->end);
+
 					I2CMasterDataPut (
 						this->register_base_address,*this->next_transmit_byte
 					);
@@ -466,19 +411,12 @@ cc2652_twi_master_output_next_buffer (cc2652_twi_master_t *this) {
 						this->register_base_address,
 						(I2C_MCTRL_START | I2C_MCTRL_RUN)
 					);
+
+				} else if (io_twi_transfer_rx_length(&this->current_transfer) > 0) {
+					// receive only to be supported soon...
 				} else {
-					// get and free ...
+					// nothing to do
 				}
-#if 0
-				io_log (
-					io_socket_io (this),
-					IO_INFO_LOG_LEVEL,
-					"%-*s%-*sstatus = 0x%x\n",
-					DBP_FIELD1,"twi",
-					DBP_FIELD2,"send",
-					HWREG(this->register_base_address + I2C_O_MSTAT)
-				);
-#endif
 
 				return true;
 			}
