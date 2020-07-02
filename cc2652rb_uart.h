@@ -180,7 +180,7 @@ static EVENT_DATA io_socket_state_t cc2652_uart_state_open = {
 static io_socket_t*
 cc2652_uart_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	cc2652_uart_t *this = (cc2652_uart_t*) socket;
-	this->io = io;
+	initialise_io_socket (socket,io);
 	this->State = &cc2652_uart_state_closed;
 	
 	this->tx_pipe = mk_io_encoding_pipe (io_get_byte_memory(io),C->transmit_pipe_length);
