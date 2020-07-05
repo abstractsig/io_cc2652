@@ -34,10 +34,12 @@ void cc2652_time_clock_dequeue_alarm (io_t*,io_alarm_t*);
 bool cc2652_is_first_run (io_t*);
 bool cc2652_clear_first_run (io_t*);
 void cc2652_flush_log (io_t*);
+void cc2652_stack_usage_info (io_t*,memory_info_t*);
 
 #define SPECIALISE_IO_CPU_IMPLEMENTATION(S) \
 	SPECIALISE_IO_IMPLEMENTATION(S) \
 	.do_gc = cc2652_do_gc,\
+	.get_stack_usage_info = cc2652_stack_usage_info,\
 	.signal_event_pending = cc2652_signal_event_pending,\
 	.uid = cc2652_get_uid,\
 	.is_first_run = cc2652_is_first_run,\
@@ -367,20 +369,47 @@ initialise_ram_interrupt_vectors (void) {
 	}
 }
 
+void
+cc2652_stack_usage_info (io_t *io,memory_info_t *info) {
+   extern uint32_t ld_end_of_static_ram_allocations;
+   extern uint32_t ld_top_of_c_stack;
+   uint32_t* cursor = &ld_end_of_static_ram_allocations;
+   uint32_t* end = &ld_top_of_c_stack;
+   uint32_t count = 0;
+
+   info->total_bytes = (end - cursor) * 4;
+
+   while (cursor < end) {
+   	if (*cursor != 0xdeadc0de) break;
+   	count++;
+   	cursor++;
+   }
+
+   info->free_bytes = count * 4;
+   info->used_bytes = info->total_bytes - info->free_bytes;
+}
+
+
 static void
 initialise_c_runtime (void) {
-    extern uint32_t ld_start_of_sdata_in_flash;
-    extern uint32_t ld_start_of_sdata_in_ram,ld_end_of_sdata_in_ram;
-    extern uint32_t ld_start_of_bss,ld_end_of_bss;
+	extern uint32_t ld_start_of_sdata_in_flash;
+	extern uint32_t ld_start_of_sdata_in_ram,ld_end_of_sdata_in_ram;
+	extern uint32_t ld_start_of_bss,ld_end_of_bss;
 
-    uint32_t *src = &ld_start_of_sdata_in_flash;
-    uint32_t *dest = &ld_start_of_sdata_in_ram;
+	uint32_t *src = &ld_start_of_sdata_in_flash;
+	uint32_t *dest = &ld_start_of_sdata_in_ram;
 
-    while(dest < &ld_end_of_sdata_in_ram) *dest++ = *src++;
-    dest = &ld_start_of_bss;
-    while(dest < &ld_end_of_bss) *dest++ = 0;
+	while(dest < &ld_end_of_sdata_in_ram) *dest++ = *src++;
+	dest = &ld_start_of_bss;
+	while(dest < &ld_end_of_bss) *dest++ = 0;
 
-    initialise_ram_interrupt_vectors();
+	// fill stack/heap region of RAM with a pattern
+	extern uint32_t ld_end_of_static_ram_allocations;
+	uint32_t *end = (uint32_t*) __get_MSP();
+	dest = &ld_end_of_static_ram_allocations;
+	while (dest < end) *dest++ = 0xdeadc0de;
+
+	initialise_ram_interrupt_vectors();
 }
 
 int main(void);

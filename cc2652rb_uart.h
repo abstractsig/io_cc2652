@@ -13,8 +13,11 @@ typedef struct PACK_STRUCTURE cc2652_uart {
 	io_encoding_implementation_t const *encoding;
 	io_cpu_clock_pointer_t peripheral_clock;
 
-	cc2652_io_dma_channel_t tx_dma_channel;
+	// for single inner binding
+	io_event_t *signal_transmit_available;
+	io_event_t *signal_receive_data_available;
 
+	cc2652_io_dma_channel_t tx_dma_channel;
 	io_encoding_pipe_t *tx_pipe;
 	io_event_t transmit_complete;
 	io_byte_pipe_t *rx_pipe;
@@ -101,9 +104,9 @@ cc2652_uart_output_event_handler (io_event_t *ev) {
 	if (
 			!cc2652_uart_output_next_buffer (this)
 		&&	UARTisEnabled (this->register_base_address)
-//		&& this->receieve_event)
+		&& this->signal_transmit_available
 	) {
-//		io_enqueue_event (this->io,this->receieve_event);
+		io_enqueue_event (this->io,this->signal_transmit_available);
 	}
 }
 
@@ -134,6 +137,11 @@ cc2652_uart_interrupt (void *user_value) {
 				io_byte_pipe_put_byte (this->rx_pipe,byte);
 			}
 			//io_enqueue_event (this->io,this->receieve_event);
+			if (this->signal_receive_data_available) {
+				io_enqueue_event (
+					io_socket_io(this),this->signal_receive_data_available
+				);
+			}
 		}
 
 		if (status & UART_MIS_TXMIS) {
@@ -183,7 +191,11 @@ cc2652_uart_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	initialise_io_socket (socket,io);
 	this->State = &cc2652_uart_state_closed;
 	
-	this->tx_pipe = mk_io_encoding_pipe (io_get_byte_memory(io),C->transmit_pipe_length);
+	this->tx_pipe = mk_io_encoding_pipe (
+		io_get_byte_memory(io),C->transmit_pipe_length
+	);
+	this->signal_transmit_available = NULL;
+	this->signal_receive_data_available = NULL;
 
 	this->rx_pipe = mk_io_byte_pipe (
 		io_get_byte_memory(io),io_settings_receive_pipe_length(C)
@@ -255,9 +267,17 @@ cc2652_uart_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 			//	|	UART_IMSC_TXIM
 			);
 
-			UARTEnable (this->register_base_address);
+			//UARTEnable (this->register_base_address);
+		   //HWREG(this->register_base_address + UART_O_LCRH) |= UART_LCRH_FEN;
 
-			{
+		    // Enable RX, TX, and the UART.
+		    HWREG(this->register_base_address + UART_O_CTL) |= (
+		   	 	UART_CTL_UARTEN
+				|	UART_CTL_TXE
+				|	UART_CTL_RXE
+		    );
+
+		    {
 				int32_t irqn = CMSIS_IRQn(this->interrupt_number);
 				NVIC_SetPriority (irqn,NORMAL_INTERRUPT_PRIORITY);
 				NVIC_ClearPendingIRQ (irqn);
@@ -300,6 +320,23 @@ cc2652_uart_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 	return ok;
 }
 
+
+static bool
+cc2652_uart_bind_to_inner (io_socket_t *socket,io_address_t a,io_event_t *tx,io_event_t *rx) {
+	cc2652_uart_t *this = (cc2652_uart_t*) socket;
+
+	this->signal_transmit_available = tx;
+	this->signal_receive_data_available = rx;
+
+	return true;
+}
+
+io_pipe_t*
+cc2652_uart_get_receive_pipe (io_socket_t *socket,io_address_t address) {
+	cc2652_uart_t *this = (cc2652_uart_t*) socket;
+	return (io_pipe_t*) this->rx_pipe;
+}
+
 void
 cc2652_uart_flush (io_socket_t *socket) {
 	cc2652_uart_t *this = (cc2652_uart_t*) socket;
@@ -320,6 +357,8 @@ EVENT_DATA io_socket_implementation_t cc2652_uart_implementation = {
 	.close = cc2652_uart_close,
 	.new_message = cc2652_uart_new_message,
 	.send_message = cc2652_uart_send_message,
+	.bind_inner = cc2652_uart_bind_to_inner,
+	.get_receive_pipe = cc2652_uart_get_receive_pipe,
 	.flush = cc2652_uart_flush,
 	.mtu = cc2652_uart_mtu,
 };
