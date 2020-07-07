@@ -5,7 +5,7 @@
  */
 #ifndef cc2652rb_radio_H_
 #define cc2652rb_radio_H_
-
+#include <layers/io_ble5_layer.h>
 #include <ti/drivers/rf/RFQueue.h>
 #include <ti/driverlib/rf_ble_cmd.h>
 
@@ -193,7 +193,7 @@ modify_receive_command (
    cc2652rb_radio_generic_receive.pParams->rxConfig.bAutoFlushEmpty = 1;
    cc2652rb_radio_generic_receive.pParams->rxConfig.bIncludeLenByte = 1;
    cc2652rb_radio_generic_receive.pParams->rxConfig.bIncludeCrc = 0;
-   cc2652rb_radio_generic_receive.pParams->rxConfig.bAppendRssi = 0;
+   cc2652rb_radio_generic_receive.pParams->rxConfig.bAppendRssi = 1;		// where?
    cc2652rb_radio_generic_receive.pParams->rxConfig.bAppendStatus = 0;
    cc2652rb_radio_generic_receive.pParams->rxConfig.bAppendTimestamp = 0;
 
@@ -560,41 +560,99 @@ cc2652rb_radio_receive_frame_command_acknowledge (io_socket_t *socket) {
 	return socket->State;
 }
 
+io_encoding_t*
+cc2652rb_radio_new_receive_packet (io_socket_t *socket) {
+	io_encoding_t *message = io_packet_encoding_new (
+		io_get_byte_memory(io_socket_io (socket))
+	);
+
+	if (message != NULL) {
+/*		io_layer_t *layer = push_ble_transmit_layer (message);
+		if (layer != NULL) {
+//			io_layer_set_source_address (layer,message,io_socket_address(socket));
+//			io_layer_set_inner_address (layer,message,IO_NULL_LAYER_ID);
+			reference_io_encoding (message);
+		} else {
+			io_panic (io_socket_io(socket),IO_PANIC_OUT_OF_MEMORY);
+		}
+*/
+	}
+
+	return message;
+}
+
+
+//
+// receive ble5 frame
+//
 static io_socket_state_t const*
 cc2652rb_radio_receive_frame_receive (io_socket_t *socket) {
 	cc2652rb_radio_socket_t *this = (cc2652rb_radio_socket_t*) socket;
-   BLE_Frame frame;
-   static uint32_t count = 0;
+   rfc_dataEntryGeneral_t *next;
+   ble5_packet_t *packet;
+   io_inner_binding_t *rx;
 
-   rfc_dataEntryGeneral_t *currentDataEntry;
-   uint8_t *packetPointer;
+   next = RFQueue_getDataEntry();
+   packet = (ble5_packet_t *)(&next->data + 1);
+   rx = io_multiplex_socket_find_inner_binding (
+   	(io_multiplex_socket_t*) this,def_io_u8_address(ble5_packet_type(packet))
+	);
 
-   currentDataEntry = RFQueue_getDataEntry();
-   packetPointer = (uint8_t *)(&currentDataEntry->data);
+   io_log (
+		io_socket_io (socket),
+		IO_DETAIL_LOG_LEVEL,
+		"%-*s%-*stype %u 0x%02x %u\n",
+		DBP_FIELD1,"radio",
+		DBP_FIELD2,"rx",
+		ble5_packet_type(packet),(&next->data)[1],ble5_packet_length(packet)
+	);
 
-   frame.length = packetPointer[2] + 2;
+   if (rx) {
+   	io_encoding_t *msg = reference_io_encoding (
+   		cc2652rb_radio_new_receive_packet (socket)
+		);
+   	io_layer_t *ble  = push_io_ble5_layer (msg);
+   	io_encoding_append_bytes (
+   		msg,(uint8_t*) packet,ble5_packet_length(packet)
+		);
+   	io_layer_load_header(ble,msg);
+
+   	if (io_encoding_pipe_put_encoding (io_inner_binding_receive_pipe(rx),msg)) {
+   		io_enqueue_event (io_socket_io (this),io_inner_binding_receive_event(rx));
+   	}
+   	unreference_io_encoding (msg);
+   }
+
+   // this uses global data
+   RFQueue_nextEntry();
+
+/*   frame.length = packetPointer[2] + 2;
    frame.pData = packetPointer + 1;
 
-   /* 4 MHz clock, so divide by 4 to get microseconds */
+   // 4 MHz clock, so divide by 4 to get microseconds
    frame.timestamp = this->receive_stats.timeStamp >> 2;
    frame.rssi = this->receive_stats.lastRssi;
 
    frame.channel = 37;
    frame.phy = 0;
 
-   RFQueue_nextEntry();
-
 	#if defined(CC2652_RADIO_SOCKET_LOG_LEVEL)
+
+   uint64_t aa = read_le_uint48(packetPointer + 2);
+
+   //0x17DC8197F225
+
 	io_log (
 		io_socket_io (socket),
 		IO_DETAIL_LOG_LEVEL,
-		"%-*s%-*slength = %u\n",
+		"%-*s%-*s0x02 aa = %llx\n",
 		DBP_FIELD1,"radio",
 		DBP_FIELD2,"rx",
-		frame.length
+		packetPointer[0],
+		aa
 	);
 	#endif
-	count ++;
+*/
 
 	return socket->State;
 }
@@ -757,11 +815,11 @@ cc2652rb_radio_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) 
 	initialise_io_multiplex_socket (socket,io,C);
 
 	this->active_command = NULL;
-   this->receive_stats.nRxOk = 0;                      //!<        Number of packets received with CRC OK
-   this->receive_stats.nRxNok = 0;                     //!<        Number of packets received with CRC error
-   this->receive_stats.nRxBufFull = 0;                 //!<        Number of packets that have been received and discarded due to lack of buffer space
-   this->receive_stats.lastRssi = 0;                     //!<        The RSSI of the last received packet (signed)
-   this->receive_stats.timeStamp = 0;                   //!<        Time stamp of the last received packet
+   this->receive_stats.nRxOk = 0;			// Number of packets received with CRC OK
+   this->receive_stats.nRxNok = 0;			// Number of packets received with CRC error
+   this->receive_stats.nRxBufFull = 0;		// Number of packets that have been received and discarded due to lack of buffer space
+   this->receive_stats.lastRssi = 0;		// The RSSI of the last received packet (signed)
+   this->receive_stats.timeStamp = 0;		// Time stamp of the last received packet
 
 
 	RFQueue_defineQueue (
@@ -826,25 +884,15 @@ cc2652rb_radio_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) 
 	return socket;
 }
 
-static void
-cc2652rb_radio_open_event (io_event_t *ev) {
-	io_socket_t *this = ev->user_value;
-	io_socket_call_open (this,0);
-	io_byte_memory_free (io_get_byte_memory (io_socket_io (this)),ev);
-}
-
 static bool
 cc2652rb_radio_open (io_socket_t *socket,io_socket_open_flag_t flag) {
 	cc2652rb_radio_socket_t *this = (cc2652rb_radio_socket_t*) socket;
 
+	//
+	// not used
+	//
+
 	if (cpu_clock_is_derrived_from_hp_oscillator (this->peripheral_clock)) {
-		io_event_t *ev = io_byte_memory_allocate (
-			io_get_byte_memory (io_socket_io (socket)),sizeof(io_event_t)
-		);
-
-		initialise_io_event (ev,cc2652rb_radio_open_event,socket);
-		io_enqueue_event (io_socket_io (socket),ev);
-
 		return true;
 	} else {
 		return false;
@@ -862,7 +910,23 @@ cc2652rb_radio_is_closed (io_socket_t const *socket) {
 
 io_encoding_t*
 cc2652rb_radio_new_message (io_socket_t *socket) {
-	return NULL;
+	io_encoding_t *message = io_packet_encoding_new (
+		io_get_byte_memory(io_socket_io (socket))
+	);
+
+	if (message != NULL) {
+/*		io_layer_t *layer = push_ble_transmit_layer (message);
+		if (layer != NULL) {
+//			io_layer_set_source_address (layer,message,io_socket_address(socket));
+//			io_layer_set_inner_address (layer,message,IO_NULL_LAYER_ID);
+			reference_io_encoding (message);
+		} else {
+			io_panic (io_socket_io(socket),IO_PANIC_OUT_OF_MEMORY);
+		}
+*/
+	}
+
+	return message;
 }
 
 static bool

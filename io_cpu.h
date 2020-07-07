@@ -260,6 +260,14 @@ void
 initialise_io_cpu (io_t *io) {
 	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
 
+	PRCMPowerDomainOff(PRCM_DOMAIN_PERIPH);
+	PRCMPowerDomainOff(PRCM_DOMAIN_SERIAL);
+
+	PRCMPowerDomainOn(PRCM_DOMAIN_RFCORE);
+
+	PRCMPowerDomainOff(PRCM_DOMAIN_RFCORE);
+
+
 	this->in_event_thread = false;
 	this->first_run = cc2652_io_config_read_first_run ();
 	this->dma_channel_list = &null_dma_channel;
