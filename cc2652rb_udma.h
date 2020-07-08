@@ -28,6 +28,7 @@ bool	initialise_io_cpu_dma (io_t*,io_cpu_clock_pointer_t);
 void	cc2652_register_dma_channel (io_t*,io_dma_channel_t*);
 
 extern EVENT_DATA io_dma_channel_implementation_t cc2652_dma_channel_implementation;
+#include <ti/driverlib/udma.h>
 
 #ifdef IMPLEMENT_IO_CPU_DMA
 //-----------------------------------------------------------------------------

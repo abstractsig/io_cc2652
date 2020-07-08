@@ -6,6 +6,8 @@
 #ifndef cc2652rb_clocks_H_
 #define cc2652rb_clocks_H_
 
+#include <ti/driverlib/prcm.h>
+
 //
 // power domains
 //
@@ -461,6 +463,7 @@ EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
 	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_rtc_clock_start,
 };
+
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif

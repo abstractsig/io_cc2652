@@ -100,6 +100,7 @@ static void     TrimAfterColdReset( void );
 static void     TrimAfterColdResetWakeupFromShutDown( uint32_t ui32Fcfg1Revision );
 static void     TrimAfterColdResetWakeupFromShutDownWakeupFromPowerDown( void );
 
+
 //*****************************************************************************
 //
 // Perform the necessary trim of the device which is not done in boot code
@@ -127,7 +128,8 @@ SetupTrimDevice(void)
     ThisLibraryIsFor_CC13x2_CC26x2_HwRev20AndLater_HaltIfViolated();
 
     // Enable standby in flash bank
-    HWREGBITW( FLASH_BASE + FLASH_O_CFG, FLASH_CFG_DIS_STANDBY_BITN ) = 0;
+    //HWREGBITW( FLASH_BASE + FLASH_O_CFG, FLASH_CFG_DIS_STANDBY_BITN ) = 0;
+    FLASH0->CFG.bit.DIS_STANDBY = 0;
 
     // Select correct CACHE mode and set correct CACHE configuration
 #if ( CCFG_BASE == CCFG_BASE_DEFAULT )
@@ -185,7 +187,8 @@ SetupTrimDevice(void)
 
     // Set VIMS power domain control.
     // PDCTL1VIMS = 0 ==> VIMS power domain is only powered when CPU power domain is powered
-    HWREG( PRCM_BASE + PRCM_O_PDCTL1VIMS ) = 0;
+//    HWREG( PRCM_BASE + PRCM_O_PDCTL1VIMS ) = 0;
+    PRCM0->PDCTL1VIMS.register_value = 0;
 
     // Configure optimal wait time for flash FSM in cases where flash pump
     // wakes up from sleep
@@ -342,3 +345,4 @@ TrimAfterColdReset( void )
 {
     // Currently no specific trim for Cold Reset
 }
+

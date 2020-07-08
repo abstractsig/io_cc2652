@@ -33,6 +33,10 @@ typedef struct PACK_STRUCTURE cc2652_uart {
 
 } cc2652_uart_t;
 
+extern EVENT_DATA io_socket_implementation_t cc2652_uart_implementation;
+
+#include <ti/driverlib/uart.h>
+
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
 //

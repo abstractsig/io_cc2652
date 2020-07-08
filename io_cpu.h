@@ -8,6 +8,10 @@
 #define __RFC_STRUCT_ATTR
 #include <cc2652rb.h>
 
+void	cc2652_start_gpio_clock (io_t*);
+
+#include <cc2652rb_pins.h>
+
 void cc2652_do_gc (io_t*,int32_t);
 io_cpu_clock_pointer_t cc2652_get_core_clock (io_t*);
 io_uid_t const* cc2652_get_uid (io_t*);
@@ -90,11 +94,9 @@ typedef struct PACK_STRUCTURE io_cc2652_cpu {
 } io_cc2652_cpu_t;
 
 void	initialise_io_cpu (io_t*);
-void	cc2652_start_gpio_clock (io_t*);
 void	start_time_clock (io_cc2652_cpu_t*);
 
 #include <cc2652rb_clocks.h>
-#include <cc2652rb_pins.h>
 #include <cc2652rb_uart.h>
 #include <cc2652rb_radio.h>
 #include <cc2652_twi_master.h>
@@ -105,6 +107,7 @@ void	start_time_clock (io_cc2652_cpu_t*);
 // implementation
 //
 //-----------------------------------------------------------------------------
+
 #include <cc2652rb_time.h>
 
 void
@@ -243,8 +246,13 @@ cc2652_unregister_interrupt_handler (
 }
 
 static void
-hard_fault (void *io) {
+hard_fault (void *user_value) {
+	io_t *io = user_value;
+	memory_info_t info;
 	DISABLE_INTERRUPTS;
+
+	io_byte_memory_get_info (io_get_byte_memory(io),&info);
+
 	while(1);
 }
 

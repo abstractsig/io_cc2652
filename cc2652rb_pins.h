@@ -6,6 +6,8 @@
 #ifndef cc2652rb_pins_H_
 #define cc2652rb_pins_H_
 
+#include <ti/driverlib/ioc.h>
+
 typedef union PACK_STRUCTURE {
     io_pin_t io;
     uint32_t u32;
@@ -30,6 +32,9 @@ typedef union PACK_STRUCTURE {
 #define cc2652_io_pin_active_level(pin)		(pin).cc.active_level
 #define cc2652_io_pin_initial_state(pin)		(pin).cc.initial_state
 #define cc2652_io_pin_ioc_port_id(pin)			(pin).cc.ioc_port_id
+
+void cc2652_set_io_pin_interrupt (io_t*,io_pin_t,io_interrupt_handler_t*);
+void cc2652_write_to_io_pin (io_t*,io_pin_t,int32_t);
 
 #define IO_PIN_ACTIVE_LEVEL_HIGH        1
 #define IO_PIN_ACTIVE_LEVEL_LOW     0
@@ -112,7 +117,7 @@ typedef union PACK_STRUCTURE {
 //
 //-----------------------------------------------------------------------------
 
-static void
+void
 cc2652_write_to_io_pin (io_t *io,io_pin_t rpin,int32_t state) {
     cc2652_io_pin_t pin = {rpin};
     if (state ^ cc2652_io_pin_active_level (pin)) {

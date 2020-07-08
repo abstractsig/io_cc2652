@@ -44,6 +44,7 @@ extern "C"
 {
 #endif
 
+
 #include <stdint.h>
 #include <string.h>
 
@@ -348,7 +349,6 @@ CPE_PATCH_TYPE patchCpeHd[] = {
 #define _NWORD_PATCHSYS_BT5 0
 
 
-
 #ifndef _BT5_SYSRAM_START
 #define _BT5_SYSRAM_START 0x20000000
 #endif
@@ -370,10 +370,11 @@ CPE_PATCH_TYPE patchCpeHd[] = {
 static uint8_t bBt5PatchEntered = 0;
 #endif
 
+volatile
 PATCH_FUN_SPEC void enterBt5CpePatch(void)
 {
 #if (_NWORD_PATCHIMAGE_BT5 > 0)
-   uint32_t *pPatchVec = (uint32_t *) (_BT5_CPERAM_START + _BT5_PATCH_VEC_OFFSET);
+	uint32_t *pPatchVec = (uint32_t *) (_BT5_CPERAM_START + _BT5_PATCH_VEC_OFFSET);
 
    memcpy(pPatchVec, patchImageBt5, sizeof(patchImageBt5));
 #endif
@@ -382,7 +383,7 @@ PATCH_FUN_SPEC void enterBt5CpePatch(void)
 PATCH_FUN_SPEC void enterBt5CpeHdPatch(void)
 {
 #if (_NWORD_PATCHCPEHD_BT5 > 0)
-   uint32_t *pPatchCpeHd = (uint32_t *) (_BT5_CPERAM_START + _BT5_PATCH_CPEHD_OFFSET);
+	uint32_t *pPatchCpeHd = (uint32_t *) (_BT5_CPERAM_START + _BT5_PATCH_CPEHD_OFFSET);
 
    memcpy(pPatchCpeHd, patchCpeHd, sizeof(patchCpeHd));
 #endif
@@ -394,8 +395,7 @@ PATCH_FUN_SPEC void enterBt5SysPatch(void)
 
 PATCH_FUN_SPEC void configureBt5Patch(void)
 {
-   uint8_t *pPatchTab = (uint8_t *) (_BT5_CPERAM_START + _BT5_PATCH_TAB_OFFSET);
-
+	uint8_t *pPatchTab = (uint8_t *) (_BT5_CPERAM_START + _BT5_PATCH_TAB_OFFSET);
 
    pPatchTab[1] = 0;
    pPatchTab[21] = 1;
@@ -443,7 +443,6 @@ void rf_patch_cpe_bt5(void)
 {
    applyBt5Patch();
 }
-
 
 //*****************************************************************************
 //

@@ -66,6 +66,7 @@ extern EVENT_DATA io_socket_implementation_t cc2652rb_radio_socket_implementatio
 // Implementation
 //
 //-----------------------------------------------------------------------------
+
 #include <ti/driverlib/rf_common_cmd.h>
 #include <ti/driverlib/rf_mailbox.h>
 #include <ti/driverlib/rf_prop_cmd.h>
@@ -99,7 +100,7 @@ typedef struct {
 
 INLINE_FUNCTION void
 write_to_radio_command_register (uint32_t rawCmd) {
-	HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDR) = rawCmd;
+	RFC_DOOR_BELL->CMDR.register_value = rawCmd;
 }
 
 // Structure for CMD_BLE5_GENERIC_RX.pParam
@@ -282,18 +283,18 @@ static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_radio_error;
 
 bool
 RF_ratIsRunning(void) {
-    /* Assume by default that the RAT is not available. */
-    bool status = false;
+	/* Assume by default that the RAT is not available. */
+	bool status = false;
 
-    /* If the RF core power domain is ON, read the clock of the RAT. */
-    if (HWREG(PRCM_BASE + PRCM_O_PDSTAT0) & PRCM_PDSTAT0_RFC_ON)
-    {
-        status = (bool)(HWREG(RFC_PWR_BASE + RFC_PWR_O_PWMCLKEN) & RFC_PWR_PWMCLKEN_RAT_M);
-    }
+	/* If the RF core power domain is ON, read the clock of the RAT. */
+	if (PRCM0->PDSTAT0.bit.RFC_ON) {
+	  status = RFC_PWR->PWMCLKEN.bit.RAT_M;
+	}
 
-    /* Return with the status of RAT. */
-    return(status);
+	/* Return with the status of RAT. */
+	return(status);
 }
+
 
 static io_socket_state_t const*
 cc2652rb_radio_power_off_open (
@@ -317,28 +318,31 @@ cc2652rb_radio_power_off_open (
 	// 	the radio CPU set it back to zero 'immediately'
 
 	//  Enable output RTC clock for Radio Timer Synchronization
-   HWREG(AON_RTC_BASE + AON_RTC_O_CTL) |= AON_RTC_CTL_RTC_UPD_EN_M;
+   //HWREG(AON_RTC_BASE + AON_RTC_O_CTL) |= AON_RTC_CTL_RTC_UPD_EN_M;
+   RTC->CTL.bit.RTC_UPD_EN = 1;
 
 	// Set the automatic bus request
-	HWREG(PRCM_BASE + PRCM_O_RFCBITS) = RF_BOOT0;
+//	HWREG(PRCM_BASE + PRCM_O_RFCBITS) = RF_BOOT0;
+	PRCM0->RFCBITS.register_value = RF_BOOT0;
 
 	cc2652rb_radio_socket_t *this = (cc2652rb_radio_socket_t*) socket;
 	if (io_cpu_clock_start (this->io,this->peripheral_clock)) {
-	   uint32_t availableRfModes = HWREG(PRCM_BASE + PRCM_O_RFCMODEHWOPT);
 
-	   if (availableRfModes & (1 << RF_MODE_BLE)) {
+	   if (PRCM0->RFCMODEHWOPT.part.AVAIL & (1 << RF_MODE_BLE)) {
 	   	cc2652rb_radio_socket_t *this = (cc2652rb_radio_socket_t*) socket;
+	   	RFC_Doorbell_t *db = RFC_DOOR_BELL;
+
 	   	//
 	   	// do stuff from power-up-state
 	   	//
 			// Set the RF mode in the PRCM register (already verified that it is valid)
 	   	//
-			HWREG(PRCM_BASE + PRCM_O_RFCMODESEL) = RF_MODE_AUTO;
+			PRCM0->RFCMODESEL.register_value = RF_MODE_AUTO;
+			db->RFCPEISL.register_value = CC2652_CPE1_INTERRUPTS;
 
-			HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEISL) = CC2652_CPE1_INTERRUPTS;
+			db->RFCPEIFG.register_value = 0;
 
-			HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIFG) = 0;
-			HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIEN) = (
+			db->RFCPEIEN.register_value = (
 					CC2652_CPE0_INTERRUPTS
 				|	CC2652_CPE1_INTERRUPTS
 			);
@@ -386,7 +390,13 @@ static io_socket_state_t const*
 cc2652rb_radio_system_bus_request_enter (io_socket_t *socket) {
 
 	// clear interrupt ...
-	RFCCpeIntClear((uint32_t) RFC_DBELL_RFCPEIFG_BOOT_DONE | RFC_DBELL_RFCPEIFG_MODULES_UNLOCKED);
+//	RFCCpeIntClear((uint32_t) RFC_DBELL_RFCPEIFG_BOOT_DONE | RFC_DBELL_RFCPEIFG_MODULES_UNLOCKED);
+//   HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIFG) = ~ui32Mask;
+
+	RFC_DOOR_BELL->RFCPEIFG.register_value = ~(
+			RFC_DBELL_RFCPEIFG_BOOT_DONE
+		|	RFC_DBELL_RFCPEIFG_MODULES_UNLOCKED
+	);
 
 	write_to_radio_command_register (CMDR_DIR_CMD_1BYTE(CMD_BUS_REQUEST, 1));
 	return socket->State;
@@ -394,7 +404,7 @@ cc2652rb_radio_system_bus_request_enter (io_socket_t *socket) {
 
 static io_socket_state_t const*
 cc2652rb_radio_system_bus_request_acknowledge (io_socket_t *socket) {
-	volatile uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
+	volatile uint32_t status = RFC_DOOR_BELL->CMDSTA.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
 	if (status == 1) {
 		return (io_socket_state_t const*) &cc2652rb_radio_setup_radio;
 	} else {
@@ -417,7 +427,7 @@ cc2652rb_radio_start_radio_timer_enter (io_socket_t *socket) {
 
 static io_socket_state_t const*
 cc2652rb_radio_start_radio_timer_command_acknowledge (io_socket_t *socket) {
-	volatile uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
+	volatile uint32_t status = RFC_DOOR_BELL->CMDSTA.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
 	if (status == 1) {
 		return (io_socket_state_t const*) &cc2652rb_radio_power_on;
 	} else {
@@ -433,7 +443,7 @@ static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_radio_start_radio_time
 };
 
 void
-RF_decodeOverridePointers (rfc_CMD_RADIO_SETUP_t* radioSetup,uint16_t** pTxPower, uint32_t** pRegOverride) {
+RF_decodeOverridePointers (rfc_CMD_RADIO_SETUP_t* radioSetup,uint16_t** pTxPower, volatile uint32_t** pRegOverride) {
    switch (radioSetup->commandNo)
    {
        case (CMD_RADIO_SETUP):
@@ -442,7 +452,7 @@ RF_decodeOverridePointers (rfc_CMD_RADIO_SETUP_t* radioSetup,uint16_t** pTxPower
            break;
        case (CMD_BLE5_RADIO_SETUP):
            *pTxPower     = &((rfc_CMD_BLE5_RADIO_SETUP_t*) radioSetup)->txPower;
-           *pRegOverride = ((rfc_CMD_BLE5_RADIO_SETUP_t*) radioSetup)->pRegOverrideCommon;
+           *pRegOverride = ((rfc_CMD_BLE5_RADIO_SETUP_t *) radioSetup)->pRegOverrideCommon;
            break;
        case (CMD_PROP_RADIO_SETUP):
 //           *pTxPower     = &radioSetup->prop.txPower;
@@ -463,7 +473,7 @@ RF_decodeOverridePointers (rfc_CMD_RADIO_SETUP_t* radioSetup,uint16_t** pTxPower
 /* Define for HPOSC temperature limits */
 #define RF_TEMP_LIMIT_3_DEGREES_CELSIUS        0x300
 
-static int32_t                  RF_currentHposcFreqOffset;
+static int32_t RF_currentHposcFreqOffset;
 
 
 static io_socket_state_t const*
@@ -471,12 +481,12 @@ cc2652rb_radio_setup_radio_enter (io_socket_t *socket) {
 	cc2652rb_radio_socket_t *this = (cc2652rb_radio_socket_t*) socket;
 
 //   uint16_t* pTxPower = NULL;
-   uint32_t* pRegOverride = ((rfc_CMD_BLE5_RADIO_SETUP_t*) this->radio_setup)->pRegOverrideCommon;
+   volatile uint32_t* pRegOverride = ((rfc_CMD_BLE5_RADIO_SETUP_t*) this->radio_setup)->pRegOverrideCommon;
 
 //   RF_decodeOverridePointers (this->radio_setup,&pTxPower,&pRegOverride);
 
    uint8_t index;
-   index = RFCOverrideSearch(pRegOverride, RF_HPOSC_OVERRIDE_PATTERN, RF_HPOSC_OVERRIDE_MASK, RF_OVERRIDE_SEARCH_DEPTH);
+   index = RFCOverrideSearch((uint32_t const*)pRegOverride, RF_HPOSC_OVERRIDE_PATTERN, RF_HPOSC_OVERRIDE_MASK, RF_OVERRIDE_SEARCH_DEPTH);
 
    if (index < RF_OVERRIDE_SEARCH_DEPTH) {
    	int32_t tempDegC = AONBatMonTemperatureGetDegC();
@@ -500,7 +510,7 @@ cc2652rb_radio_setup_radio_command_acknowledge (io_socket_t *socket) {
 
 static io_socket_state_t const*
 cc2652rb_radio_setup_radio_command_done (io_socket_t *socket) {
-	volatile uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
+	volatile uint32_t status = RFC_DOOR_BELL->CMDSTA.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
 	if (status == 1) {
 		return (io_socket_state_t const*) &cc2652rb_radio_start_radio_timer;
 	} else {
@@ -526,7 +536,7 @@ cc2652rb_radio_receive_frame_enter (io_socket_t *socket) {
 
 static io_socket_state_t const*
 cc2652rb_radio_receive_frame_command_done (io_socket_t *socket) {
-	volatile uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
+	volatile uint32_t status = RFC_DOOR_BELL->CMDSTA.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
 
 	if (status == 1) {
 		#if defined(CC2652_RADIO_SOCKET_LOG_LEVEL)
@@ -545,7 +555,7 @@ cc2652rb_radio_receive_frame_command_done (io_socket_t *socket) {
 
 static io_socket_state_t const*
 cc2652rb_radio_receive_frame_command_acknowledge (io_socket_t *socket) {
-	volatile uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
+	volatile uint32_t status = RFC_DOOR_BELL->CMDSTA.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_CMDSTA);
 	if (status == 1) {
 		#if defined(CC2652_RADIO_SOCKET_LOG_LEVEL)
 		io_log (
@@ -598,14 +608,31 @@ cc2652rb_radio_receive_frame_receive (io_socket_t *socket) {
    	(io_multiplex_socket_t*) this,def_io_u8_address(ble5_packet_type(packet))
 	);
 
-   io_log (
-		io_socket_io (socket),
-		IO_DETAIL_LOG_LEVEL,
-		"%-*s%-*stype %u 0x%02x %u\n",
-		DBP_FIELD1,"radio",
-		DBP_FIELD2,"rx",
-		ble5_packet_type(packet),(&next->data)[1],ble5_packet_length(packet)
-	);
+   {
+   	static uint32_t count = 0;
+   	memory_info_t info;
+   	count++;
+   	if ((count % 64) == 0) {
+   		io_byte_memory_get_info (io_get_byte_memory(io_socket_io(socket)),&info);
+   		io_log (
+   			io_socket_io (socket),
+   			IO_DETAIL_LOG_LEVEL,
+   			"%-*s%-*stype %u 0x%02x %u (r %u)\n",
+   			DBP_FIELD1,"radio",
+   			DBP_FIELD2,"rx",
+   			ble5_packet_type(packet),(&next->data)[1],ble5_packet_length(packet),info.used_bytes
+   		);
+   	} else {
+   		io_log (
+   			io_socket_io (socket),
+   			IO_DETAIL_LOG_LEVEL,
+   			"%-*s%-*stype %u 0x%02x %u\n",
+   			DBP_FIELD1,"radio",
+   			DBP_FIELD2,"rx",
+   			ble5_packet_type(packet),(&next->data)[1],ble5_packet_length(packet)
+   		);
+   	}
+		}
 
    if (rx) {
    	io_encoding_t *msg = reference_io_encoding (
@@ -620,6 +647,7 @@ cc2652rb_radio_receive_frame_receive (io_socket_t *socket) {
    	if (io_encoding_pipe_put_encoding (io_inner_binding_receive_pipe(rx),msg)) {
    		io_enqueue_event (io_socket_io (this),io_inner_binding_receive_event(rx));
    	}
+
    	unreference_io_encoding (msg);
    }
 
@@ -670,7 +698,7 @@ static io_socket_state_t const*
 cc2652rb_radio_power_on_enter (io_socket_t *socket) {
 
    // RF core boot process is now finished
-//   HWREG(PRCM_BASE + PRCM_O_RFCBITS) |= RF_BOOT1;
+//   PRCM0->RFCBITS.register_value |= RF_BOOT1;
 
 	#if defined(CC2652_RADIO_SOCKET_LOG_LEVEL)
 	io_log (
@@ -726,10 +754,13 @@ static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_radio_error = {
 
 static void
 cc2652rb_radio_cpe0_interrupt (void *user_value) {
-	uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIFG);
+	uint32_t status = RFC_DOOR_BELL->RFCPEIFG.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIFG);
 	cc2652rb_radio_socket_t *this = user_value;
 
-	RFCCpeIntClear(CC2652_CPE0_INTERRUPTS);
+//	RFCCpeIntClear(CC2652_CPE0_INTERRUPTS);
+	RFC_DOOR_BELL->RFCPEIFG.register_value = ~(
+			CC2652_CPE0_INTERRUPTS
+	);
 
 	if (status & RFC_DBELL_RFCPEIFG_COMMAND_DONE) {
 		io_enqueue_event (io_socket_io(this),&this->command_done);
@@ -739,10 +770,13 @@ cc2652rb_radio_cpe0_interrupt (void *user_value) {
 
 static void
 cc2652rb_radio_cpe1_interrupt (void *user_value) {
-	uint32_t status = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIFG);
+	uint32_t status = RFC_DOOR_BELL->RFCPEIFG.register_value;//HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFCPEIFG);
 	cc2652rb_radio_socket_t *this = user_value;
 
-	RFCCpeIntClear(CC2652_CPE1_INTERRUPTS);
+//	RFCCpeIntClear(CC2652_CPE1_INTERRUPTS);
+	RFC_DOOR_BELL->RFCPEIFG.register_value = ~(
+			CC2652_CPE1_INTERRUPTS
+	);
 
 	if (status & RFC_DBELL_RFCPEIFG_RX_ENTRY_DONE) {
 		io_enqueue_event (io_socket_io(this),&this->receive_event);
@@ -755,7 +789,7 @@ cc2652rb_radio_cpe1_interrupt (void *user_value) {
 static void
 cc2652rb_radio_hardware_interrupt (void *user_value) {
    uint32_t rfchwifg = RFCHwIntGetAndClear(RF_HW_INT_CPE_MASK | RF_HW_INT_RAT_CH_MASK);
-   uint32_t rfchwien = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFHWIEN) & RF_HW_INT_CPE_MASK;
+   uint32_t rfchwien = RFC_DOOR_BELL->RFHWIEN.bit.MDMSOFT;// HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFHWIEN) & RF_HW_INT_CPE_MASK;
    uint32_t rathwien = HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFHWIEN) & RF_HW_INT_RAT_CH_MASK;
 
 
@@ -773,7 +807,8 @@ cc2652rb_radio_hardware_interrupt (void *user_value) {
 static void
 cc2652rb_radio_door_bell_interrupt (void *user_value) {
 	cc2652rb_radio_socket_t *this = user_value;
-	HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFACKIFG) = 0;
+//	HWREG(RFC_DBELL_BASE + RFC_DBELL_O_RFACKIFG) = 0;
+	RFC_DOOR_BELL->RFACKIFG.register_value = 0;
 	io_enqueue_event (io_socket_io(this),&this->command_acknowledge);
 }
 
@@ -909,21 +944,18 @@ cc2652rb_radio_is_closed (io_socket_t const *socket) {
 }
 
 io_encoding_t*
-cc2652rb_radio_new_message (io_socket_t *socket) {
-	io_encoding_t *message = io_packet_encoding_new (
-		io_get_byte_memory(io_socket_io (socket))
+cc2652rb_radio_new_binary_message (io_socket_t *socket) {
+	io_encoding_t *message = reference_io_encoding (
+		io_packet_encoding_new (
+				io_get_byte_memory(io_socket_io (socket))
+		)
 	);
 
 	if (message != NULL) {
-/*		io_layer_t *layer = push_ble_transmit_layer (message);
-		if (layer != NULL) {
-//			io_layer_set_source_address (layer,message,io_socket_address(socket));
-//			io_layer_set_inner_address (layer,message,IO_NULL_LAYER_ID);
-			reference_io_encoding (message);
-		} else {
+		io_layer_t *layer = push_io_binary_transmit_layer (message);
+		if (layer == NULL) {
 			io_panic (io_socket_io(socket),IO_PANIC_OUT_OF_MEMORY);
 		}
-*/
 	}
 
 	return message;
@@ -939,20 +971,23 @@ cc2652rb_radio_mtu (io_socket_t const *socket) {
 	return 256;
 }
 
+#define SPECIALISE_CC2652RB_RADIO_SOCKET_IMPLEMENTATION(S) \
+	SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION(S) \
+	.initialise = cc2652rb_radio_initialise,	\
+	.reference = io_virtual_socket_increment_reference,	\
+	.open = cc2652rb_radio_open,	\
+	.close = cc2652rb_radio_close,	\
+	.is_closed = cc2652rb_radio_is_closed,	\
+	.new_message = cc2652rb_radio_new_binary_message,	\
+	.send_message = cc2652rb_radio_send_message,	\
+	.mtu = cc2652rb_radio_mtu,	\
+	/**/
+
 EVENT_DATA io_socket_implementation_t cc2652rb_radio_socket_implementation = {
-	SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION (
+	SPECIALISE_CC2652RB_RADIO_SOCKET_IMPLEMENTATION (
 		&io_multiplex_socket_implementation
 	)
-	.initialise = cc2652rb_radio_initialise,
-	.reference = io_virtual_socket_increment_reference,
-	.open = cc2652rb_radio_open,
-	.close = cc2652rb_radio_close,
-	.is_closed = cc2652rb_radio_is_closed,
-	.new_message = cc2652rb_radio_new_message,
-	.send_message = cc2652rb_radio_send_message,
-	.mtu = cc2652rb_radio_mtu,
 };
-
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif
