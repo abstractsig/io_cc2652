@@ -54,7 +54,6 @@ typedef struct PACK_STRUCTURE cc2652rb_radio_socket {
 io_socket_t* cc2652rb_radio_initialise (io_socket_t*,io_t*,io_settings_t const*);
 bool cc2652rb_radio_send_message (io_socket_t*,io_encoding_t*);
 size_t cc2652rb_radio_mtu (io_socket_t const*);
-io_encoding_t* cc2652rb_radio_new_binary_message (io_socket_t*);
 
 extern EVENT_DATA io_socket_implementation_t cc2652rb_radio_socket_implementation;
 extern EVENT_DATA io_socket_implementation_t cc2652rb_ble5_socket_implementation;
@@ -63,7 +62,6 @@ extern EVENT_DATA io_socket_implementation_t cc2652rb_ble5_socket_implementation
 	SPECIALISE_IO_MULTIPLEX_SOCKET_IMPLEMENTATION(S) \
 	.initialise = cc2652rb_radio_initialise,	\
 	.reference = io_virtual_socket_increment_reference,	\
-	.new_message = cc2652rb_radio_new_binary_message,	\
 	.send_message = cc2652rb_radio_send_message,	\
 	.mtu = cc2652rb_radio_mtu,	\
 	/**/
@@ -151,7 +149,7 @@ mk_SYNC_START_RAT_command (io_byte_memory_t* bm,ratmr_t rat0) {
 	this->active_command = NULL;
 
 
-static bool
+bool
 is_cc2652_radio_timer_running(void) {
 	bool status = false;
 

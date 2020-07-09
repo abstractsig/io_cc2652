@@ -370,7 +370,6 @@ CPE_PATCH_TYPE patchCpeHd[] = {
 static uint8_t bBt5PatchEntered = 0;
 #endif
 
-volatile
 PATCH_FUN_SPEC void enterBt5CpePatch(void)
 {
 #if (_NWORD_PATCHIMAGE_BT5 > 0)
