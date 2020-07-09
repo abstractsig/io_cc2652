@@ -39,6 +39,7 @@ bool cc2652_is_first_run (io_t*);
 bool cc2652_clear_first_run (io_t*);
 void cc2652_flush_log (io_t*);
 void cc2652_stack_usage_info (io_t*,memory_info_t*);
+void cc2652_start_watchdog_timer (io_t*,uint32_t);
 
 #define SPECIALISE_IO_CPU_IMPLEMENTATION(S) \
 	SPECIALISE_IO_IMPLEMENTATION(S) \
@@ -78,6 +79,15 @@ typedef struct PACK_STRUCTURE cc2652_time_clock {
     io_t *io;
 } cc2652_time_clock_t;
 
+typedef struct cc2652_watchdog {
+	io_cpu_clock_pointer_t peripheral_clock;
+	io_event_t clock_change;
+
+	io_alarm_t timer;
+	io_event_t ev;
+	uint32_t period;
+} cc2652_watchdog_t;
+
 #define CC2652_IO_CPU_STRUCT_MEMBERS \
 	IO_STRUCT_MEMBERS               \
 	uint32_t in_event_thread;\
@@ -87,18 +97,20 @@ typedef struct PACK_STRUCTURE cc2652_time_clock {
 	cc2652_time_clock_t rtc;\
 	uint32_t first_run;\
 	io_dma_channel_t *dma_channel_list;\
+	cc2652_watchdog_t watchdog;\
 	/**/
 
+
 typedef struct PACK_STRUCTURE io_cc2652_cpu {
-    CC2652_IO_CPU_STRUCT_MEMBERS
+	CC2652_IO_CPU_STRUCT_MEMBERS
 } io_cc2652_cpu_t;
 
 void	initialise_io_cpu (io_t*);
 void	start_time_clock (io_cc2652_cpu_t*);
+void cc2652_start_watchdog (io_t*,uint32_t);
 
 #include <cc2652rb_clocks.h>
 #include <cc2652rb_uart.h>
-#include <cc2652rb_radio.h>
 #include <cc2652_twi_master.h>
 
 #ifdef IMPLEMENT_IO_CPU
@@ -110,10 +122,85 @@ void	start_time_clock (io_cc2652_cpu_t*);
 
 #include <cc2652rb_time.h>
 
+#include <ti/driverlib/watchdog.h>
+
+static void
+cc2652_watchdog_timer_event (io_event_t *ev) {
+	io_cc2652_cpu_t *this = ev->user_value;
+	cc2652_watchdog_t *wd = &this->watchdog;
+	uint32_t load_value = WDT0->LOAD.register_value;
+	uint32_t count = WDT0->VALUE.register_value;
+
+	UNUSED(load_value);
+	UNUSED(count);
+
+	WDT0->ICR.register_value = 1;
+
+	set_alarm_delay_time (
+		(io_t*) this,&wd->timer,millisecond_time(wd->period)
+	);
+	io_enqueue_alarm ((io_t*) this,&wd->timer);
+}
+
+static void
+cc2652_watchdog_timer_interrupt (void *user_value) {
+	uint32_t load_value = WDT0->LOAD.register_value;
+	uint32_t count = WDT0->VALUE.register_value;
+
+	UNUSED(load_value);
+	UNUSED(count);
+	WDT0->ICR.register_value = 1;
+//	while (1);
+}
+
+//
+// WDT is in AON power domain
+//
+void
+cc2652_start_watchdog (io_t *io,uint32_t countdown_period_ms) {
+   io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+   static bool initialised = false;
+
+	if (!initialised) {
+		cc2652_watchdog_t *wd = &this->watchdog;
+		if (io_cpu_clock_start (io,wd->peripheral_clock)) {
+			float64_t freq = io_cpu_clock_get_current_frequency (wd->peripheral_clock);
+			uint32_t load_value = ((uint32_t) (freq/1000.0)) * countdown_period_ms;
+			WDT_registers_t *wdr = WDT0;
+
+			wd->period = 10;// countdown_period_ms/2;
+
+			wdr->LOAD.register_value = load_value;
+			//wdr->CTL.bit.INTTYPE = 1; // generates a INT_NMI_FAULT
+			wdr->CTL.bit.RESEN = 1; //
+			//wdr->TEST.bit.STALL = 1;
+
+			initialise_io_event (&wd->ev,cc2652_watchdog_timer_event,io);
+			wd->timer.at = &wd->ev;
+			wd->timer.error = &wd->ev;
+
+			//
+			register_io_interrupt_handler (
+				io,INT_WDT_IRQ,cc2652_watchdog_timer_interrupt,io
+			);
+
+			set_alarm_delay_time (io,&wd->timer,millisecond_time(wd->period));
+			io_enqueue_alarm (io,&wd->timer);
+
+			WDT0->CTL.bit.INTEN = 1;	// thats it folks
+			initialised = true;
+		} else {
+			io_panic (io,IO_PANIC_UNRECOVERABLE_ERROR);
+		}
+	} else {
+		// an error?
+	}
+}
+
 void
 cc2652_start_gpio_clock (io_t *io) {
-    io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
-    io_cpu_clock_start (io,this->gpio_clock);
+	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
+	io_cpu_clock_start (io,this->gpio_clock);
 }
 
 INLINE_FUNCTION uint32_t prbs_rotl(const uint32_t x, int k) {
@@ -217,6 +304,9 @@ cc2652_io_config_read_first_run (void) {
 
 static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
 
+//
+// number is ti-number, i.e. cmsis-number + 16
+//
 void
 cc2652_register_interrupt_handler (
 	io_t *io,int32_t number,io_interrupt_action_t handler,void *user_value
@@ -264,17 +354,15 @@ event_thread (void *io) {
 	this->in_event_thread = false;
 }
 
+extern const ccfg_t __ccfg;
+
 void
 initialise_io_cpu (io_t *io) {
 	io_cc2652_cpu_t *this = (io_cc2652_cpu_t*) io;
 
-	PRCMPowerDomainOff(PRCM_DOMAIN_PERIPH);
-	PRCMPowerDomainOff(PRCM_DOMAIN_SERIAL);
 
-	PRCMPowerDomainOn(PRCM_DOMAIN_RFCORE);
-
-	PRCMPowerDomainOff(PRCM_DOMAIN_RFCORE);
-
+	ccfg_t const *cfg = &__ccfg;
+	UNUSED(cfg);
 
 	this->in_event_thread = false;
 	this->first_run = cc2652_io_config_read_first_run ();
@@ -538,3 +626,17 @@ void __attribute__((naked)) resetISR(void)
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif
+/*
+Copyright 2020 Gregor Bruce
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT,
+OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*/

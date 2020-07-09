@@ -50,26 +50,30 @@ typedef int32_t IRQn_Type;
     } while (0)
 
 //
-// because ...
+// This started to help track down a volatile bug by creating a C
+// alternative to the Ti HWREG macros.  It turned out that there
+// was no problem but these structs are nice so I kept using them.
 //
-
 typedef struct {
 	__IO union {
 		uint32_t register_value;
 		struct {
-			uint32_t :32;
+			uint32_t RATIO:2;
+			uint32_t :30;
 		} bit;
 	} INFRCLKDIVR;	// 0h Infrastructure Clock Division Factor For Run Mode Section 7.8.2.1
 	__IO union {
 		uint32_t register_value;
 		struct {
-			uint32_t :32;
+			uint32_t RATIO:2;
+			uint32_t :30;
 		} bit;
 	} INFRCLKDIVS;//  4h Infrastructure Clock Division Factor For Sleep Mode Section 7.8.2.2
 	__IO union {
 		uint32_t register_value;
 		struct {
-			uint32_t :32;
+			uint32_t RATIO:2;
+			uint32_t :30;
 		} bit;
 	} INFRCLKDIVDS;//  8h Infrastructure Clock Division Factor For DeepSleepMode Section 7.8.2.3
 	__IO union {
@@ -850,12 +854,79 @@ typedef struct {
 } FLASH_registers_t;
 
 
+typedef struct {
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t all:32;
+		} bit;
+	} LOAD; //  0x00
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t all:32;
+		} bit;
+	} VALUE; //  0x04
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t INTEN:1;
+			uint32_t RESEN:1;
+			uint32_t INTTYPE:1;
+			uint32_t :29;
+		} bit;
+	} CTL; //  0x08
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t all:32;
+		} bit;
+	} ICR; // 0x0c
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t WDTRIS:1;
+			uint32_t :31;
+		} bit;
+	} RIS; // 0x10
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t :32;
+		} bit;
+	} MIS; // 0x14
+	__IO uint32_t spacer1[257];
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t TEST_EN:1;
+			uint32_t :7;
+			uint32_t STALL:1;
+			uint32_t :23;
+		} bit;
+	} TEST; // 0x418
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t :32;
+		} bit;
+	} INT_CAUS; // 0x41c
+	__IO uint32_t spacer2[505];
+	__IO union {
+		uint32_t register_value;
+		struct {
+			uint32_t all:32;
+		} bit;
+	} LOCK; // 0xc00
+} WDT_registers_t;
+
 #define FLASH0					((FLASH_registers_t*) FLASH_BASE)
 
 #define RTC						((RTC_registers_t*) AON_RTC_BASE)
 #define PRCM0					((PRCM_registers_t*) PRCM_BASE)
 #define RFC_DOOR_BELL		((RFC_Doorbell_t*) RFC_DBELL_BASE)
 #define RFC_PWR				((RFC_PWR_registers_t*) RFC_PWR_BASE)
+#define WDT0					((WDT_registers_t*) WDT_BASE)
 
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
@@ -886,3 +957,17 @@ typedef struct {
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif
+/*
+Copyright 2020 Gregor Bruce
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT,
+OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*/

@@ -17,10 +17,12 @@ typedef struct PACK_STRUCTURE io_cc2652_cpu_power_domain {
     uint32_t prcm_domain_identifier;
 } io_cc2652_cpu_power_domain_t;
 
+#define CLOCK_MEMORY
+
 extern EVENT_DATA io_cc2652_cpu_power_domain_t cpu_core_power_domain;
-extern io_cc2652_cpu_power_domain_t peripheral_power_domain;
-extern io_cc2652_cpu_power_domain_t serial_power_domain;
-extern io_cc2652_cpu_power_domain_t radio_power_domain;
+extern CLOCK_MEMORY io_cc2652_cpu_power_domain_t peripheral_power_domain;
+extern CLOCK_MEMORY io_cc2652_cpu_power_domain_t serial_power_domain;
+extern CLOCK_MEMORY io_cc2652_cpu_power_domain_t radio_power_domain;
 
 //
 // clocks
@@ -30,19 +32,19 @@ extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_imple
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation;
-extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_infrastructure_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_serial_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_radio_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_dma_clock_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_wdt_clock_implementation;
 
 
 typedef struct PACK_STRUCTURE cc2652_hf_rc_oscillator {
     IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
 } cc2652_hf_rc_oscillator_t;
-
 
 typedef struct PACK_STRUCTURE cc2652_hp_oscillator {
     IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
@@ -53,8 +55,19 @@ typedef struct PACK_STRUCTURE cc2652_sclk_lf {
     IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
 } cc2652_sclk_lf_t;
 
+typedef struct PACK_STRUCTURE cc2652_infrastructure_clock {
+	IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
+	struct PACK_STRUCTURE {
+		uint32_t run_mode:2;
+		uint32_t sleep_mode:2;
+		uint32_t deep_sleep_mode:2;
+		uint32_t :26;
+	} divider;
+} cc2652_infrastructure_clock_t;
+
 typedef struct cc2652_core_clock {
-    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
+	IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
+//    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
 } cc2652_core_clock_t;
 
 typedef struct cc2652_rtc_clock {
@@ -82,8 +95,12 @@ cpu_clock_is_cc2652_hp_oscillator (io_cpu_clock_pointer_t clock) {
 }
 
 INLINE_FUNCTION bool
-cpu_clock_is_derrived_from_hp_oscillator (io_cpu_clock_pointer_t clock) {
-    return io_cpu_clock_is_derrived_from (clock,&cc2652_hp_oscillator_implementation);
+cpu_clock_is_derrived_from_hp_oscillator (
+	io_cpu_clock_pointer_t clock
+) {
+	return io_cpu_clock_is_derrived_from (
+		clock,&cc2652_hp_oscillator_implementation
+	);
 }
 
 #ifdef IMPLEMENT_IO_CPU
@@ -264,8 +281,11 @@ cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
 	}
 }
 
-EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation = {
-	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_hp_oscillator_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION (
+		&io_cpu_clock_implementation
+	)
 	.get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
 	.get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
 	.get_power_domain = get_always_on_io_power_domain,
@@ -301,11 +321,68 @@ cc2652_sclk_lf_start (io_t *io,io_cpu_clock_pointer_t clock) {
     }
 }
 
-EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation = {
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_sclk_lf_implementation = {
 	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
 	.get_current_frequency = cc2652_sclk_lf_get_current_frequency,
 	.get_expected_frequency = cc2652_sclk_lf_get_current_frequency,
 	.start = cc2652_sclk_lf_start,
+};
+
+static bool
+cc2652_infrastructure_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
+	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		cc2652_infrastructure_clock_t const *this = (
+			(cc2652_infrastructure_clock_t const*) (
+				io_cpu_clock_ro_pointer (clock)
+			)
+		);
+
+		PRCM0->INFRCLKDIVR.bit.RATIO = this->divider.run_mode;
+		PRCM0->INFRCLKDIVS.bit.RATIO = this->divider.sleep_mode;
+		PRCM0->INFRCLKDIVDS .bit.RATIO = this->divider.deep_sleep_mode;
+
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static float64_t
+cc2652_infrastructure_clock_get_frequency (io_cpu_clock_pointer_t clock) {
+	cc2652_infrastructure_clock_t const *this = (cc2652_infrastructure_clock_t const*) (
+        io_cpu_clock_ro_pointer (clock)
+    );
+    float64_t f = io_cpu_clock_get_current_frequency (this->input);
+    uint32_t div;
+
+    // assume run mode ...
+    switch (PRCM0->INFRCLKDIVR.bit.RATIO) {
+    	 case 0:
+   	 	 div = 1;
+   	 break;
+    	 case 1:
+   	 	 div = 2;
+   	 break;
+    	 case 2:
+   	 	 div = 8;
+   	 break;
+    	 case 3:
+   	 	 div = 32;
+   	 break;
+    }
+
+    return f / ((float64_t) (div));
+}
+
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_infrastructure_clock_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_FUNCTION_IMPLEMENTATION(
+		&io_cpu_clock_function_implementation
+	)
+	.start = cc2652_infrastructure_clock_start,
+	.get_current_frequency = cc2652_infrastructure_clock_get_frequency,
+	.get_expected_frequency = cc2652_infrastructure_clock_get_frequency,
 };
 
 static float64_t
@@ -352,8 +429,11 @@ cc2652_core_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
     return def_io_cpu_power_domain_pointer (&cpu_core_power_domain);
 }
 
-EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation = {
-	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION(&io_cpu_clock_implementation)
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_core_clock_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_FUNCTION_IMPLEMENTATION (
+		&io_cpu_clock_function_implementation
+	)
 	.get_current_frequency = cc2652_core_clock_get_current_frequency,
 	.get_expected_frequency = cc2652_core_clock_get_current_frequency,
 	.get_power_domain = cc2652_core_clock_get_power_domain,
@@ -390,7 +470,8 @@ cc2652_peripheral_clock_get_power_domain (io_cpu_clock_pointer_t clock) {
     return def_io_cpu_power_domain_pointer (&peripheral_power_domain);
 }
 
-EVENT_DATA io_cpu_clock_implementation_t cc2652_peripheral_clock_implementation = {
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_peripheral_clock_implementation = {
 	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(
 		&io_dependent_clock_implementation
 	)
@@ -464,6 +545,41 @@ EVENT_DATA io_cpu_clock_implementation_t cc2652_rtc_clock_implementation = {
 	.start = cc2652_rtc_clock_start,
 };
 
+static float64_t
+cc2652_wdt_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
+    cc2652_rtc_clock_t const *this = (cc2652_rtc_clock_t const*) (
+        io_cpu_clock_ro_pointer (clock)
+    );
+    //
+    // there is a pre-scaller in the WD according to the ti driver
+    //
+    return io_cpu_clock_get_current_frequency (this->input) / (32.0);
+}
+
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_wdt_clock_implementation = {
+	SPECIALISE_DEPENDANT_IO_CPU_CLOCK_IMPLEMENTATION(
+		&io_dependent_clock_implementation
+	)
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_peripheral_clock_start,
+	.get_current_frequency = cc2652_wdt_clock_get_current_frequency,
+};
+
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif
+/*
+Copyright 2020 Gregor Bruce
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT,
+OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
+ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*/
