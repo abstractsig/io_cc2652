@@ -18,6 +18,8 @@ typedef struct PACK_STRUCTURE cc2652rb_ble5_socket {
 
 } cc2652rb_ble5_socket_t;
 
+extern EVENT_DATA io_socket_implementation_t cc2652rb_ble5_socket_implementation;
+
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
 //
