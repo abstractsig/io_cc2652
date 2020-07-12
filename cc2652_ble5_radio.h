@@ -26,6 +26,45 @@ extern EVENT_DATA io_socket_implementation_t cc2652rb_ble5_socket_implementation
 // Implementation
 //
 //-----------------------------------------------------------------------------
+/*
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ *
+ * ble5 state machine
+ *
+ *               <cpu reset>
+ *                 |
+ *                 v
+ *               cc2652rb_ble5_power_off
+ *           <open>|
+ *                 v
+ *               cc2652rb_ble5_system_bus_request
+ *                 |
+ *                 v
+ *               cc2652rb_ble5_setup_radio
+ *                 |
+ *                 v
+ *               cc2652rb_ble5_start_radio_timer
+ *                 |
+ *                 v
+ *               cc2652rb_ble5_power_on
+ *                 |
+ *                 v
+ *               cc2652rb_ble5_receive_frame
+ *
+ *
+ *     <any> --> cc2652rb_radio_error
+ *
+ *-----------------------------------------------------------------------------
+ *-----------------------------------------------------------------------------
+ */
+static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_power_off;
+static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_system_bus_request;
+static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_start_radio_timer;
+static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_setup_radio;
+static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_power_on;
+static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_receive_frame;
+
 
 
 // Structure for CMD_BLE5_GENERIC_RX.pParam
@@ -123,43 +162,6 @@ modify_receive_command (
    cc2652rb_radio_generic_receive.pParams->rxConfig.bAppendStatus = 0;
    cc2652rb_radio_generic_receive.pParams->rxConfig.bAppendTimestamp = 0;
 }
-
-
-/*
- *-----------------------------------------------------------------------------
- *-----------------------------------------------------------------------------
- *
- * ble5 state machine
- *
- *               <cpu reset>
- *                 |
- *                 v
- *               cc2652rb_ble5_power_off
- *           <open>|
- *                 v
- *               cc2652rb_ble5_system_bus_request
- *                 |
- *                 v
- *               cc2652rb_ble5_setup_radio
- *                 |
- *                 v
- *               cc2652rb_ble5_start_radio_timer
- *                 |
- *                 v
- *               cc2652rb_ble5_power_on
- *
- *
- *     <any> --> cc2652rb_radio_error
- *
- *-----------------------------------------------------------------------------
- *-----------------------------------------------------------------------------
- */
-static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_power_off;
-static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_system_bus_request;
-static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_start_radio_timer;
-static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_setup_radio;
-static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_power_on;
-static EVENT_DATA io_cc2652_radio_socket_state_t cc2652rb_ble5_receive_frame;
 
 static io_socket_state_t const*
 cc2652rb_ble5_power_off_open (

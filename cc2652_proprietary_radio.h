@@ -1,6 +1,6 @@
 /*
  *
- * cc2652 ble5 radio
+ * cc2652 proprietary radio  -- like nrf52 radio layer ..
  *
  */
 #ifndef cc2652_proprietary_radio_H_

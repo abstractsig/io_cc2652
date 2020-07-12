@@ -30,7 +30,9 @@ extern CLOCK_MEMORY io_cc2652_cpu_power_domain_t radio_power_domain;
 
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_lf_rc_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_lf_crystal_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_sclk_lf_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_infrastructure_clock_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_core_clock_implementation;
@@ -67,7 +69,6 @@ typedef struct PACK_STRUCTURE cc2652_infrastructure_clock {
 
 typedef struct cc2652_core_clock {
 	IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
-//    IO_CPU_DEPENDANT_CLOCK_STRUCT_MEMBERS
 } cc2652_core_clock_t;
 
 typedef struct cc2652_rtc_clock {
@@ -86,12 +87,26 @@ cc2652_clock_is_hp_oscillator (io_cpu_clock_pointer_t clock) {
 
 INLINE_FUNCTION bool
 cpu_clock_is_cc2652_hf_rc_oscillator (io_cpu_clock_pointer_t clock) {
-    return io_cpu_clock_has_implementation (clock,&cc2652_hf_rc_48_oscillator_implementation);
+	return io_cpu_clock_has_implementation (clock,&cc2652_hf_rc_48_oscillator_implementation);
 }
 
 INLINE_FUNCTION bool
 cpu_clock_is_cc2652_hp_oscillator (io_cpu_clock_pointer_t clock) {
-    return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
+	return io_cpu_clock_has_implementation (clock,&cc2652_hp_oscillator_implementation);
+}
+
+INLINE_FUNCTION bool
+cpu_clock_is_cc2652_lf_crystal_oscillator (io_cpu_clock_pointer_t clock) {
+	return io_cpu_clock_has_implementation (
+   		clock,&cc2652_lf_crystal_oscillator_implementation
+	);
+}
+
+INLINE_FUNCTION bool
+cpu_clock_is_cc2652_lf_rc_oscillator (io_cpu_clock_pointer_t clock) {
+	return io_cpu_clock_has_implementation (
+   		clock,&cc2652_lf_rc_oscillator_implementation
+	);
 }
 
 INLINE_FUNCTION bool
@@ -284,7 +299,7 @@ cc2652_hp_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
 EVENT_DATA io_cpu_clock_implementation_t
 cc2652_hp_oscillator_implementation = {
 	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION (
-		&io_cpu_clock_implementation
+		&io_cpu_clock_source_implementation
 	)
 	.get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
 	.get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
@@ -292,6 +307,16 @@ cc2652_hp_oscillator_implementation = {
 	.start = cc2652_hp_oscillator_start,
 };
 
+//
+// SCLK_LF derived from one of:
+//		OSC_RCOSC_HF
+//		OSC_XOSC_HF
+//		OSC_RCOSC_LF
+//		OSC_XOSC_LF
+//
+// This is established in ccfg so device clock tree needs to follow
+// the ccfg device defines
+//
 static float64_t
 cc2652_sclk_lf_get_current_frequency (io_cpu_clock_pointer_t this) {
     cc2652_sclk_lf_t const *c = (cc2652_sclk_lf_t const*) (
@@ -302,23 +327,44 @@ cc2652_sclk_lf_get_current_frequency (io_cpu_clock_pointer_t this) {
 
 static bool
 cc2652_sclk_lf_start (io_t *io,io_cpu_clock_pointer_t clock) {
-    if (io_cpu_dependant_clock_start_input (io,clock)) {
-        cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
-            io_cpu_clock_ro_pointer (clock)
-        );
+	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
+			io_cpu_clock_ro_pointer (clock)
+		);
 
-        if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
-            OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_RCOSC_HF);
-        } else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
-            OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_XOSC_HF);
-        } else {
-            return false;
-        }
+		uint32_t current_source;
 
-        return true;
-    } else {
-        return false;
-    }
+		UNUSED(current_source);
+		current_source = OSCClockSourceGet(OSC_SRC_CLK_LF);
+		if (current_source == OSC_XOSC_LF) {
+
+		}
+
+		if (cpu_clock_is_cc2652_hf_rc_oscillator (this->input)) {
+			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_RCOSC_HF);
+		} else if (cpu_clock_is_cc2652_hp_oscillator (this->input)) {
+			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_XOSC_HF);
+		} else if (cpu_clock_is_cc2652_lf_crystal_oscillator (this->input)) {
+			//
+			// not working yet
+			//
+			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_XOSC_LF);
+			while (OSCClockSourceGet(OSC_SRC_CLK_LF) != OSC_XOSC_LF);
+		} else if (cpu_clock_is_cc2652_lf_rc_oscillator (this->input)) {
+			OSCClockSourceSet (OSC_SRC_CLK_LF,OSC_RCOSC_LF);
+		} else {
+			return false;
+		}
+
+		current_source = OSCClockSourceGet(OSC_SRC_CLK_LF);
+		if (current_source == OSC_XOSC_LF) {
+
+		}
+
+		return true;
+	} else {
+	  return false;
+	}
 }
 
 EVENT_DATA io_cpu_clock_implementation_t
@@ -327,6 +373,43 @@ cc2652_sclk_lf_implementation = {
 	.get_current_frequency = cc2652_sclk_lf_get_current_frequency,
 	.get_expected_frequency = cc2652_sclk_lf_get_current_frequency,
 	.start = cc2652_sclk_lf_start,
+};
+
+static bool
+cc2652_lf_crystal_oscillator_start (io_t *io,io_cpu_clock_pointer_t clock) {
+
+	// just need to know it is configured
+
+	// what does DDI_0_OSC_STAT0_XOSC_LF_EN mean
+
+	return true;
+}
+
+static float64_t
+cc2652_get_32khz (
+	io_cpu_clock_pointer_t this
+) {
+    return (float64_t) (1UL << 15);
+}
+
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_lf_crystal_oscillator_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_SOURCE_IMPLEMENTATION (
+		&io_cpu_clock_source_implementation
+	)
+	.start = cc2652_lf_crystal_oscillator_start,
+	.get_current_frequency = cc2652_get_32khz,
+	.get_expected_frequency = cc2652_get_32khz,
+};
+
+
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_lf_rc_oscillator_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_SOURCE_IMPLEMENTATION (
+		&io_cpu_clock_source_implementation
+	)
+	.get_current_frequency = cc2652_get_32khz,
+	.get_expected_frequency = cc2652_get_32khz,
 };
 
 static bool
@@ -518,13 +601,16 @@ EVENT_DATA io_cpu_clock_implementation_t cc2652_radio_clock_implementation = {
 	.start = cc2652_radio_clock_start,
 };
 
+//
+// RTC clock is supplied from SCLK_LF
+//
 static bool
 cc2652_rtc_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
-    if (io_cpu_dependant_clock_start_input (io,clock)) {
-        return true;
-    } else {
-        return false;
-    }
+	if (io_cpu_dependant_clock_start_input (io,clock)) {
+		return true;
+	} else {
+		return false;
+	}
 }
 
 static float64_t
