@@ -17,6 +17,7 @@
 typedef struct PACK_STRUCTURE cc2652_twi_master {
 	IO_TWI_MASTER_SOCKET_STRUCT_MEMBERS
 
+	io_inner_binding_t *current_inner_binding;
 	io_twi_transfer_t current_transfer;
 	io_event_t transfer_complete;
 	
@@ -150,6 +151,10 @@ io_socket_state_t const*
 io_twi_master_socket_state_busy_end (io_socket_t *socket) {
 	cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
 
+	io_encoding_pipe_pop_encoding (
+		io_inner_binding_transmit_pipe(this->current_inner_binding)
+	);
+
 	if (this->current_receive_message != NULL) {
 		io_layer_t *layer = get_twi_layer (this->current_receive_message);
 
@@ -166,10 +171,23 @@ io_twi_master_socket_state_busy_end (io_socket_t *socket) {
 				io_inner_binding_receive_pipe (inner),this->current_receive_message
 			);
 			io_enqueue_event (io_socket_io(this),io_inner_binding_receive_event(inner));
+		} else {
+			// something bad happened
 		}
 
 		unreference_io_encoding (this->current_receive_message);
 		this->current_receive_message = NULL;
+	}
+
+	io_inner_binding_t *next = io_multiplex_socket_get_next_transmit_binding (
+		(io_multiplex_socket_t*) this
+	);
+	if (next != NULL) {
+		io_enqueue_event (io_socket_io(this),io_inner_binding_transmit_event(next));
+	} else {
+		io_multiplex_socket_round_robin_signal_transmit_available (
+			(io_multiplex_socket_t*) this
+		);
 	}
 
 	return (io_socket_state_t const*) &io_twi_master_socket_state_open;
@@ -213,6 +231,9 @@ cc2652_twi_master_interrupt (void *user_value) {
 			if (io_twi_transfer_tx_length (current) > 0) {
 				I2CMasterDataPut (
 					this->register_base_address,*this->next_transmit_byte
+				);
+            I2CMasterControl(
+            	this->register_base_address, I2C_MCTRL_RUN
 				);
 			} else {
 				//
@@ -375,7 +396,7 @@ cc2652_twi_master_output_next_buffer (cc2652_twi_master_t *this) {
 		if (io_encoding_pipe_peek (io_inner_binding_transmit_pipe(tx),&next)) {
 			io_twi_transfer_t *cmd = get_twi_layer (next);
 			if (cmd) {
-
+				this->current_inner_binding = tx;
 				this->current_transfer = *cmd;
 
 				if (io_twi_transfer_rx_length(&this->current_transfer) > 0) {
