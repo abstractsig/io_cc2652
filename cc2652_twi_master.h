@@ -20,6 +20,7 @@ typedef struct PACK_STRUCTURE cc2652_twi_master {
 	io_inner_binding_t *current_inner_binding;
 	io_twi_transfer_t current_transfer;
 	io_event_t transfer_complete;
+	io_event_t transfer_error;
 	
 	const uint8_t *next_transmit_byte,*end;
 	io_encoding_t *current_receive_message;
@@ -89,7 +90,6 @@ static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_bu
 static bool cc2652_twi_master_open (io_socket_t*,io_socket_open_flag_t);
 static void	cc2652_twi_master_transfer_complete (io_event_t*);
 static bool cc2652_twi_master_output_next_buffer (cc2652_twi_master_t*);
-
 
 io_socket_state_t const*
 io_twi_master_socket_state_closed_open (io_socket_t *socket,io_socket_open_flag_t flag) {
@@ -167,10 +167,14 @@ io_twi_master_socket_state_busy_end (io_socket_t *socket) {
 			io_layer_get_source_address (layer,this->current_receive_message)
 		);
 		if (inner != NULL) {
-			io_encoding_pipe_put_encoding (
-				io_inner_binding_receive_pipe (inner),this->current_receive_message
-			);
-			io_enqueue_event (io_socket_io(this),io_inner_binding_receive_event(inner));
+			io_event_t *ev = inner->port->rx_available;
+			if (ev) {
+				io_encoding_pipe_put_encoding (
+					io_inner_binding_receive_pipe (inner),
+					this->current_receive_message
+				);
+				io_enqueue_event (io_socket_io(this),ev);
+			}
 		} else {
 			// something bad happened
 		}
@@ -193,10 +197,30 @@ io_twi_master_socket_state_busy_end (io_socket_t *socket) {
 	return (io_socket_state_t const*) &io_twi_master_socket_state_open;
 }
 
+io_socket_state_t const*
+io_twi_master_socket_state_busy_exception (io_socket_t *socket,io_event_t *ex) {
+	cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
+	io_event_t *ev = io_event_list_first_match_exception (
+		&this->current_inner_binding->port->event_subscriptions
+	);
+
+	if (ev) {
+		io_enqueue_event (io_socket_io (this),ev);
+	}
+
+	if (this->current_receive_message != NULL) {
+		unreference_io_encoding (this->current_receive_message);
+		this->current_receive_message = NULL;
+	}
+
+	return (io_socket_state_t const*) &io_twi_master_socket_state_open;
+}
+
 static EVENT_DATA cc2652_twi_master_socket_state_t io_twi_master_socket_state_busy = {
 	SPECIALISE_CC2652_TWI_MASTER_SOCKET_STATE (&io_socket_state)
 	.name = "busy",
 	.transfer_complete = io_twi_master_socket_state_busy_end,
+	.outer_exception_event = io_twi_master_socket_state_busy_exception,
 };
 
 static void
@@ -216,11 +240,11 @@ cc2652_twi_master_interrupt (void *user_value) {
    uint32_t status = HWREG(this->register_base_address + I2C_O_MSTAT);
 
    if (status & (I2C_MSTAT_ERR | I2C_MSTAT_ARBLST)) {
-
-      I2CMasterControl(this->register_base_address, I2C_MCTRL_STOP);
-
-      //io_enqueue_event (io_socket_io(this),&this->transfer_error);
-
+      if (I2CMasterBusBusy (this->register_base_address)) {
+         I2CMasterControl(this->register_base_address, I2C_MCTRL_STOP);
+      } else {
+      	io_enqueue_event (io_socket_io(this),&this->transfer_error);
+      }
    } else {
    	io_twi_transfer_t *current = &this->current_transfer;
 
@@ -300,6 +324,12 @@ stop:
 
 }
 
+void
+cc2652_twi_master_error (io_event_t *ex) {
+	io_socket_t *this = ex->user_value;
+	io_socket_call_exception (this,ex);
+}
+
 static io_socket_t*
 cc2652_twi_master_initialise (io_socket_t *socket,io_t *io,io_settings_t const *C) {
 	cc2652_twi_master_t *this = (cc2652_twi_master_t*) socket;
@@ -310,6 +340,10 @@ cc2652_twi_master_initialise (io_socket_t *socket,io_t *io,io_settings_t const *
 
 	initialise_io_event (
 		&this->transfer_complete,cc2652_twi_master_transfer_complete,this
+	);
+
+	initialise_io_event (
+		&this->transfer_error,cc2652_twi_master_error,this
 	);
 
 	register_io_interrupt_handler (
@@ -469,7 +503,7 @@ cc2652_twi_master_send_message (io_socket_t *socket,io_encoding_t *encoding) {
 }
 
 EVENT_DATA io_socket_implementation_t cc2652_twi_master_implementation = {
-		SPECIALISE_IO_TWI_MASTER_SOCKET_IMPLEMENTATION (
+	SPECIALISE_IO_TWI_MASTER_SOCKET_IMPLEMENTATION (
 		&io_multiplex_socket_implementation
 	)
 	.initialise = cc2652_twi_master_initialise,
