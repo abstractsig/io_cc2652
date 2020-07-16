@@ -111,7 +111,6 @@ void cc2652_start_watchdog (io_t*,uint32_t);
 
 #include <cc2652rb_clocks.h>
 #include <cc2652rb_uart.h>
-#include <cc2652_twi_master.h>
 
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
