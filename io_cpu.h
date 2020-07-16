@@ -309,9 +309,9 @@ static io_interrupt_handler_t cpu_interrupts[NUMBER_OF_INTERRUPT_VECTORS];
 //
 void
 cc2652_register_interrupt_handler (
-	io_t *io,int32_t number,io_interrupt_action_t handler,void *user_value
+	io_t *io,int32_t ti_int_number,io_interrupt_action_t handler,void *user_value
 ) {
-	io_interrupt_handler_t *i = cpu_interrupts + number;
+	io_interrupt_handler_t *i = cpu_interrupts + ti_int_number;
 	i->action = handler;
 	i->user_value = user_value;
 }

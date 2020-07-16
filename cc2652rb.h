@@ -949,11 +949,117 @@ typedef struct {
 #include <ti/driverlib/vims.c>
 #include <ti/driverlib/uart.c>
 #include <ti/driverlib/i2c.c>
-#include <ti/driverlib/interrupt.c>
+//#include <ti/driverlib/interrupt.c>
 #include <ti/driverlib/rfc.c>
 #include <ti/driverlib/sys_ctrl.c>
 #include <ti/driverlib/cpu.c>
 
+static const uint32_t g_pui32Regs[] =
+{
+    0, NVIC_SYS_PRI1, NVIC_SYS_PRI2, NVIC_SYS_PRI3, NVIC_PRI0, NVIC_PRI1,
+    NVIC_PRI2, NVIC_PRI3, NVIC_PRI4, NVIC_PRI5, NVIC_PRI6, NVIC_PRI7,
+    NVIC_PRI8, NVIC_PRI9, NVIC_PRI10, NVIC_PRI11, NVIC_PRI12, NVIC_PRI13
+};
+
+void
+IntPrioritySet(uint32_t ui32Interrupt, uint8_t ui8Priority)
+{
+    uint32_t ui32Temp;
+
+    // Check the arguments.
+    ASSERT((ui32Interrupt >= 4) && (ui32Interrupt < NUM_INTERRUPTS));
+    ASSERT(ui8Priority <= INT_PRI_LEVEL7);
+
+    // Set the interrupt priority.
+    ui32Temp = HWREG(g_pui32Regs[ui32Interrupt >> 2]);
+    ui32Temp &= ~(0xFF << (8 * (ui32Interrupt & 3)));
+    ui32Temp |= ui8Priority << (8 * (ui32Interrupt & 3));
+    HWREG(g_pui32Regs[ui32Interrupt >> 2]) = ui32Temp;
+}
+
+void
+IntPendClear(uint32_t ui32Interrupt)
+{
+    // Check the arguments.
+    ASSERT(ui32Interrupt < NUM_INTERRUPTS);
+
+    // Determine the interrupt to unpend.
+    if(ui32Interrupt == INT_PENDSV)
+    {
+        // Unpend the PendSV interrupt.
+        HWREG(NVIC_INT_CTRL) |= NVIC_INT_CTRL_UNPEND_SV;
+    }
+    else if(ui32Interrupt == INT_SYSTICK)
+    {
+        // Unpend the SysTick interrupt.
+        HWREG(NVIC_INT_CTRL) |= NVIC_INT_CTRL_PENDSTCLR;
+    }
+    else if((ui32Interrupt >= 16) && (ui32Interrupt <= 47))
+    {
+        // Unpend the general interrupt.
+        HWREG(NVIC_UNPEND0) = 1 << (ui32Interrupt - 16);
+    }
+    else if(ui32Interrupt >= 48)
+    {
+        // Unpend the general interrupt.
+        HWREG(NVIC_UNPEND1) = 1 << (ui32Interrupt - 48);
+    }
+}
+
+void
+IntEnable(uint32_t ui32Interrupt)
+{
+    // Check the arguments.
+    ASSERT(ui32Interrupt < NUM_INTERRUPTS);
+
+    // Determine the interrupt to enable.
+    if(ui32Interrupt == INT_MEMMANAGE_FAULT)
+    {
+        // Enable the MemManage interrupt.
+        HWREG(NVIC_SYS_HND_CTRL) |= NVIC_SYS_HND_CTRL_MEM;
+    }
+    else if(ui32Interrupt == INT_BUS_FAULT)
+    {
+        // Enable the bus fault interrupt.
+        HWREG(NVIC_SYS_HND_CTRL) |= NVIC_SYS_HND_CTRL_BUS;
+    }
+    else if(ui32Interrupt == INT_USAGE_FAULT)
+    {
+        // Enable the usage fault interrupt.
+        HWREG(NVIC_SYS_HND_CTRL) |= NVIC_SYS_HND_CTRL_USAGE;
+    }
+    else if(ui32Interrupt == INT_SYSTICK)
+    {
+        // Enable the System Tick interrupt.
+        HWREG(NVIC_ST_CTRL) |= NVIC_ST_CTRL_INTEN;
+    }
+    else if((ui32Interrupt >= 16) && (ui32Interrupt <= 47))
+    {
+        // Enable the general interrupt.
+        HWREG(NVIC_EN0) = 1 << (ui32Interrupt - 16);
+    }
+    else if(ui32Interrupt >= 48)
+    {
+        // Enable the general interrupt.
+        HWREG(NVIC_EN1) = 1 << (ui32Interrupt - 48);
+    }
+}
+
+void cc2652_register_interrupt_handler (io_t*,int32_t number,io_interrupt_action_t handler,void *);
+
+void
+scif_interrupt (void *user_value) {
+	((void (*)(void)) user_value)();
+}
+
+void
+IntRegister(uint32_t ui32Interrupt, void (*pfnHandler)(void)) {
+	//
+	// This relies on cc2652 cpu not referencing io in it's implementation
+	// of this method.
+	//
+	cc2652_register_interrupt_handler (NULL,ui32Interrupt,scif_interrupt,pfnHandler);
+}
 
 #endif /* IMPLEMENT_IO_CPU */
 #endif
