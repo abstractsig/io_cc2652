@@ -30,6 +30,7 @@ extern CLOCK_MEMORY io_cc2652_cpu_power_domain_t radio_power_domain;
 
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_48_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_rc_24_oscillator_implementation;
+extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hf_xosc_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_lf_rc_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_hp_oscillator_implementation;
 extern EVENT_DATA io_cpu_clock_implementation_t cc2652_lf_crystal_oscillator_implementation;
@@ -46,12 +47,12 @@ extern EVENT_DATA io_cpu_clock_implementation_t cc2652_wdt_clock_implementation;
 
 typedef struct PACK_STRUCTURE cc2652_hf_rc_oscillator {
     IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
-} cc2652_hf_rc_oscillator_t;
+} cc2652_hf_rc_oscillator_t, cc2652_xosc_oscillator_t;
 
-typedef struct PACK_STRUCTURE cc2652_hp_oscillator {
+typedef struct PACK_STRUCTURE cc2652_hf_oscillator {
     IO_CPU_CLOCK_SOURCE_STRUCT_MEMBERS
     float64_t frequency;
-} cc2652_hp_oscillator_t;
+} cc2652_hf_oscillator_t;
 
 typedef struct PACK_STRUCTURE cc2652_sclk_lf {
     IO_CPU_CLOCK_FUNCTION_STRUCT_MEMBERS
@@ -96,6 +97,13 @@ cpu_clock_is_cc2652_hp_oscillator (io_cpu_clock_pointer_t clock) {
 }
 
 INLINE_FUNCTION bool
+cpu_clock_is_cc2652_hf_crystal_oscillator (io_cpu_clock_pointer_t clock) {
+	return io_cpu_clock_has_implementation (
+		clock,&cc2652_hf_xosc_oscillator_implementation
+	);
+}
+
+INLINE_FUNCTION bool
 cpu_clock_is_cc2652_lf_crystal_oscillator (io_cpu_clock_pointer_t clock) {
 	return io_cpu_clock_has_implementation (
    		clock,&cc2652_lf_crystal_oscillator_implementation
@@ -117,6 +125,16 @@ cpu_clock_is_derrived_from_hp_oscillator (
 		clock,&cc2652_hp_oscillator_implementation
 	);
 }
+
+INLINE_FUNCTION bool
+cpu_clock_is_derrived_from_hf_xosc_oscillator (
+	io_cpu_clock_pointer_t clock
+) {
+	return io_cpu_clock_is_derrived_from (
+		clock,&cc2652_hf_xosc_oscillator_implementation
+	);
+}
+
 
 #ifdef IMPLEMENT_IO_CPU
 //-----------------------------------------------------------------------------
@@ -270,7 +288,7 @@ cc2652_hf_rc_24_oscillator_implementation = {
 
 static float64_t
 cc2652_hp_oscillator_get_current_frequency (io_cpu_clock_pointer_t this) {
-    cc2652_hp_oscillator_t const *c = (cc2652_hp_oscillator_t const*) (
+    cc2652_hf_oscillator_t const *c = (cc2652_hf_oscillator_t const*) (
         io_cpu_clock_ro_pointer (this)
     );
     return c->frequency;
@@ -306,6 +324,28 @@ cc2652_hp_oscillator_implementation = {
 	.get_power_domain = get_always_on_io_power_domain,
 	.start = cc2652_hp_oscillator_start,
 };
+
+static bool
+cc2652_hf_xosc_oscillator_start (io_t *io,io_cpu_clock_pointer_t this) {
+	if (OSCClockSourceGet(OSC_SRC_CLK_HF) == OSC_XOSC_HF) {
+		return true;
+	} else {
+		OSCHF_TurnOnXosc();
+		return true;
+	}
+}
+
+EVENT_DATA io_cpu_clock_implementation_t
+cc2652_hf_xosc_oscillator_implementation = {
+	SPECIALISE_IO_CPU_CLOCK_IMPLEMENTATION (
+		&io_cpu_clock_source_implementation
+	)
+	.get_current_frequency = cc2652_hp_oscillator_get_current_frequency,
+	.get_expected_frequency = cc2652_hp_oscillator_get_current_frequency,
+	.get_power_domain = get_always_on_io_power_domain,
+	.start = cc2652_hf_xosc_oscillator_start,
+};
+
 
 //
 // SCLK_LF derived from one of:
@@ -479,7 +519,7 @@ cc2652_core_clock_get_current_frequency (io_cpu_clock_pointer_t clock) {
 static bool
 cc2652_core_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 	if (io_cpu_dependant_clock_start_input (io,clock)) {
-		cc2652_sclk_lf_t const *this = (cc2652_sclk_lf_t const*) (
+		cc2652_core_clock_t const *this = (cc2652_core_clock_t const*) (
 			io_cpu_clock_ro_pointer (clock)
 		);
 
@@ -498,6 +538,22 @@ cc2652_core_clock_start (io_t *io,io_cpu_clock_pointer_t clock) {
 					OSCHfSourceSwitch();
 				break;
 			}
+		} else if (cpu_clock_is_cc2652_hf_crystal_oscillator (this->input)) {
+			switch (OSCClockSourceGet(OSC_SRC_CLK_HF)) {
+				case OSC_XOSC_HF:
+					// already
+				break;
+
+				default:
+					OSCClockSourceSet(OSC_SRC_CLK_HF,OSC_XOSC_HF);
+					while (!OSCHfSourceReady());
+					OSCHfSourceSwitch();
+				break;
+			}
+
+			uint32_t f = OSCClockSourceGet(OSC_SRC_CLK_HF);
+			UNUSED(f);
+			return f == OSC_XOSC_HF;
 		} else {
 		  return false;
 		}

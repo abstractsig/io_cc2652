@@ -180,7 +180,10 @@ cc2652rb_ble5_power_off_open (
 			return socket->State;
 	}
 
-	if (cpu_clock_is_derrived_from_hp_oscillator (this->peripheral_clock)) {
+	if (
+			cpu_clock_is_derrived_from_hp_oscillator (this->peripheral_clock)
+		||	cpu_clock_is_derrived_from_hf_xosc_oscillator (this->peripheral_clock)
+	) {
 		// Notes
 		//
 		// 1	PRCM:RFCBITS control boot process for radio CPU
@@ -412,7 +415,8 @@ cc2652rb_ble5_receive_frame_command_done (io_socket_t *socket) {
 		#endif
 	}
 
-	return socket->State;
+	// re-enter
+	return NULL;//socket->State;
 }
 
 static io_socket_state_t const*
@@ -465,6 +469,11 @@ cc2652rb_ble5_receive_frame_receive (io_socket_t *socket) {
 
    next = RFQueue_getDataEntry();
    packet = (ble5_packet_t *)(&next->data + 1);
+
+   if (ble5_packet_type(packet) == 4) {
+   	rx = NULL;
+   }
+
    rx = io_multiplex_socket_find_inner_binding (
    	(io_multiplex_socket_t*) this,def_io_u8_address(ble5_packet_type(packet))
 	);
@@ -493,7 +502,7 @@ cc2652rb_ble5_receive_frame_receive (io_socket_t *socket) {
    			ble5_packet_type(packet),(&next->data)[1],ble5_packet_length(packet)
    		);
    	}
-		}
+	}
 
    if (rx) {
    	io_encoding_t *msg = reference_io_encoding (
@@ -501,7 +510,7 @@ cc2652rb_ble5_receive_frame_receive (io_socket_t *socket) {
 		);
    	io_layer_t *ble  = push_io_ble5_layer (msg);
    	io_encoding_append_bytes (
-   		msg,(uint8_t*) packet,ble5_packet_length(packet)
+   		msg,packet->payload,ble5_packet_length(packet)
 		);
    	io_layer_load_header(ble,msg);
 
