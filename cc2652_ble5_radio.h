@@ -343,6 +343,7 @@ static io_socket_state_t const*
 cc2652rb_ble5_setup_radio_enter (io_socket_t *socket) {
 	cc2652rb_ble5_socket_t *this = (cc2652rb_ble5_socket_t*) socket;
 
+#ifdef CC2652RB
 	uint32_t* pRegOverride = ((rfc_CMD_BLE5_RADIO_SETUP_t*) this->radio_setup)->pRegOverrideCommon;
 
    uint8_t index;
@@ -360,6 +361,7 @@ cc2652rb_ble5_setup_radio_enter (io_socket_t *socket) {
    	int16_t relFreqOffsetConverted = OSC_HPOSCRelativeFrequencyOffsetToRFCoreFormatConvert(relFreqOffset);
    	pRegOverride[index] = HPOSC_OVERRIDE(relFreqOffsetConverted);
    }
+#endif
 
 	write_to_radio_command_register (
 		(uint32_t) this->radio_setup
